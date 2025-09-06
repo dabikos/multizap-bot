@@ -11,7 +11,7 @@ module.exports = {
   FACTORY_ADDRESS: process.env.FACTORY_ADDRESS || '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
   
   // Private Key (замените на ваш приватный ключ)
-  PRIVATE_KEY: process.env.PRIVATE_KEY || '0x3a0303c8de5610aec32df7e11619c5cee1ed8d2eaa9eefe10bfc7a77c6e16312',
+  PRIVATE_KEY: process.env.PRIVATE_KEY || 'your_private_key_here',
   
   // Gas Configuration (EIP-1559)
   MAX_FEE_PER_GAS: process.env.MAX_FEE_PER_GAS || '50000000000', // 50 gwei
