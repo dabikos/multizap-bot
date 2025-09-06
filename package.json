@@ -1,0 +1,36 @@
+{
+  "name": "zap-cli",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CLI to deploy and interact with Zap contract on Ethereum mainnet",
+  "license": "MIT",
+  "scripts": {
+    "compile": "hardhat compile",
+    "deploy": "node scripts/deploy.js",
+    "deploy-multizap": "node scripts/deploy-multizap.js",
+    "zap-in": "node scripts/zap-in.js",
+    "multizap-in": "node scripts/multizap-in.js",
+    "exit": "node scripts/exit-and-sell.js",
+    "multizap-exit": "node scripts/multizap-exit.js",
+    "manage-tokens": "node scripts/manage-tokens.js",
+    "bot": "node bot/telegram-bot.js",
+    "watch": "node scripts/watch.js",
+    "limit": "node scripts/limit-order.js",
+    "logout": "node scripts/logout.js",
+    "web": "node server.js",
+    "start": "npm run compile && npm run web"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "ethers": "^6.13.2",
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1",
+    "node-telegram-bot-api": "^0.66.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^5.0.2",
+    "hardhat": "^2.22.11"
+  }
+}

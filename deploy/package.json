@@ -1,0 +1,45 @@
+{
+  "name": "multizap-bot-production",
+  "version": "1.0.0",
+  "description": "MultiZap Telegram Bot for 24/7 operation",
+  "main": "bot/telegram-bot.js",
+  "scripts": {
+    "start": "node bot/telegram-bot.js",
+    "dev": "nodemon bot/telegram-bot.js",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop multizap-bot",
+    "pm2:restart": "pm2 restart multizap-bot",
+    "pm2:logs": "pm2 logs multizap-bot",
+    "pm2:status": "pm2 status",
+    "pm2:delete": "pm2 delete multizap-bot"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.64.0",
+    "ethers": "^6.15.0",
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "ethereum",
+    "defi",
+    "zap",
+    "uniswap"
+  ],
+  "author": "MultiZap Team",
+  "license": "MIT"
+}
+
+
+
+
+
+
+

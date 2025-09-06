@@ -1,0 +1,47 @@
+{
+  "name": "MultiZap Bot",
+  "description": "Telegram bot for MultiZap DeFi operations",
+  "repository": "https://github.com/your-username/multizap-bot",
+  "logo": "https://via.placeholder.com/150x150/4CAF50/FFFFFF?text=MZ",
+  "keywords": ["telegram", "bot", "ethereum", "defi", "zap"],
+  "env": {
+    "BOT_TOKEN": {
+      "description": "Telegram Bot Token from @BotFather",
+      "required": true
+    },
+    "RPC_URL": {
+      "description": "Ethereum RPC URL (Alchemy, Infura, etc.)",
+      "required": true
+    },
+    "PRIVATE_KEY": {
+      "description": "Private key for wallet operations",
+      "required": true
+    },
+    "ROUTER_ADDRESS": {
+      "description": "Uniswap V2 Router Address",
+      "value": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"
+    },
+    "FACTORY_ADDRESS": {
+      "description": "Uniswap V2 Factory Address", 
+      "value": "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+    }
+  },
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "free"
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/nodejs"
+    }
+  ]
+}
+
+
+
+
+
+
+

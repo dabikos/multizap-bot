@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zap Trading Bot</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+
+        .card h2 {
+            color: #4a5568;
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #e53e3e 0%, #c53030 100%);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #38a169 0%, #2f855a 100%);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);
+        }
+
+        .wallet-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .wallet-item {
+            background: #f7fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 15px;
+            position: relative;
+        }
+
+        .wallet-item.active {
+            border-color: #667eea;
+            background: #edf2f7;
+        }
+
+        .wallet-address {
+            font-family: monospace;
+            font-size: 14px;
+            color: #4a5568;
+            word-break: break-all;
+        }
+
+        .wallet-balance {
+            color: #38a169;
+            font-weight: 600;
+            margin-top: 5px;
+        }
+
+        .status {
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-weight: 600;
+        }
+
+        .status.success {
+            background: #c6f6d5;
+            color: #22543d;
+            border: 1px solid #9ae6b4;
+        }
+
+        .status.error {
+            background: #fed7d7;
+            color: #742a2a;
+            border: 1px solid #feb2b2;
+        }
+
+        .status.info {
+            background: #bee3f8;
+            color: #2a4365;
+            border: 1px solid #90cdf4;
+        }
+
+        .price-monitor {
+            background: #1a202c;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 10px;
+            font-family: monospace;
+            margin-top: 20px;
+        }
+
+        .price-display {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #68d391;
+            margin-bottom: 10px;
+        }
+
+        .order-status {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background: #f7fafc;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Zap Trading Bot</h1>
+            <p>Автоматическая торговля с лимитными ордерами</p>
+        </div>
+
+        <!-- Управление кошельками -->
+        <div class="card">
+            <h2>👛 Управление кошельками</h2>
+            <div class="form-group">
+                <label>Добавить приватный ключ:</label>
+                <input type="password" id="privateKeyInput" placeholder="Введите приватный ключ">
+                <button class="btn" onclick="addWallet()">Добавить кошелек</button>
+            </div>
+            
+            <div id="walletList" class="wallet-list"></div>
+        </div>
+
+        <!-- Деплой контракта -->
+        <div class="card">
+            <h2>📦 Деплой контракта</h2>
+            <div class="form-group">
+                <label>Выберите кошелек:</label>
+                <select id="deployWallet">
+                    <option value="">Выберите кошелек</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Адрес токена:</label>
+                <input type="text" id="tokenAddress" placeholder="0x...">
+            </div>
+            <div class="form-group">
+                <label>Адрес LP пары:</label>
+                <input type="text" id="lpAddress" placeholder="0x...">
+            </div>
+            <div class="form-group">
+                <label>Адрес роутера:</label>
+                <input type="text" id="routerAddress" value="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D" readonly>
+            </div>
+            <button class="btn btn-success" onclick="deployContract()">Деплой контракта</button>
+            <div id="deployStatus"></div>
+        </div>
+
+        <div class="grid">
+            <!-- Ручная торговля -->
+            <div class="card">
+                <h2>💹 Ручная торговля</h2>
+                <div class="form-group">
+                    <label>Выберите кошелек:</label>
+                    <select id="tradeWallet">
+                        <option value="">Выберите кошелек</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Адрес Zap контракта:</label>
+                    <input type="text" id="zapAddress" placeholder="0x...">
+                </div>
+                <div class="form-group">
+                    <label>Сумма ETH для покупки:</label>
+                    <input type="number" id="buyAmount" placeholder="0.01" step="0.001">
+                </div>
+                <button class="btn btn-success" onclick="manualBuy()">Купить токен</button>
+                <button class="btn btn-danger" onclick="manualSell()">Продать токен</button>
+                <div id="tradeStatus"></div>
+            </div>
+
+            <!-- Лимитные ордера -->
+            <div class="card">
+                <h2>🎯 Лимитные ордера</h2>
+                <div class="form-group">
+                    <label>Выберите кошелек:</label>
+                    <select id="orderWallet">
+                        <option value="">Выберите кошелек</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Адрес токена:</label>
+                    <input type="text" id="orderToken" placeholder="0x...">
+                </div>
+                <div class="form-group">
+                    <label>Адрес LP пары:</label>
+                    <input type="text" id="orderLpPair" placeholder="0x...">
+                </div>
+                <div class="form-group">
+                    <label>Адрес Zap контракта:</label>
+                    <input type="text" id="orderZapAddress" placeholder="0x...">
+                </div>
+                <div class="form-group">
+                    <label>Цена покупки (≤ X ETH):</label>
+                    <input type="number" id="buyPrice" placeholder="0.0001" step="0.000001">
+                </div>
+                <div class="form-group">
+                    <label>Сумма ETH для покупки:</label>
+                    <input type="number" id="orderBuyAmount" placeholder="0.01" step="0.001">
+                </div>
+                <button class="btn btn-success" onclick="startLimitBuy()">Запустить лимитную покупку</button>
+                <hr style="margin:14px 0; border:0; border-top:1px solid #eee;">
+                <div class="form-group">
+                    <label>Цена продажи (≥ Y ETH):</label>
+                    <input type="number" id="sellPrice" placeholder="0.0002" step="0.000001">
+                </div>
+                <button class="btn btn-danger" onclick="startLimitSell()">Запустить лимитную продажу</button>
+                <button class="btn btn-warning" onclick="stopLimitOrder()">Остановить ордер(а)</button>
+                <div id="orderStatus"></div>
+            </div>
+        </div>
+
+        <!-- Мониторинг цены -->
+        <div class="card">
+            <h2>📊 Мониторинг цены</h2>
+            <div class="price-monitor">
+                <div class="price-display" id="currentPrice">Загрузка...</div>
+                <div id="priceHistory"></div>
+            </div>
+        </div>
+
+        <!-- Статус ордеров -->
+        <div class="card">
+            <h2>📋 Активные ордера</h2>
+            <div id="activeOrders"></div>
+        </div>
+
+        <!-- Логи действий -->
+        <div class="card">
+            <h2>🧾 Логи действий</h2>
+            <div id="appLogs" class="price-monitor" style="background:#0f172a; color:#e2e8f0; max-height:260px; overflow:auto;"></div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let wallets = [];
+        let activeOrders = new Map();
+
+        // Загрузка сохраненных кошельков
+        loadWallets();
+
+        // WebSocket события
+        socket.on('priceUpdate', (data) => {
+            document.getElementById('currentPrice').textContent = `${data.price.toFixed(8)} ETH`;
+            updatePriceHistory(data);
+        });
+
+        socket.on('orderUpdate', (data) => {
+            updateOrderStatus(data);
+        });
+
+        socket.on('tradeExecuted', (data) => {
+            showStatus('tradeStatus', `УСПЕШНО: ${data.type} выполнен`, 'success');
+        });
+
+        socket.on('appLog', (data) => {
+            appendLog(data.message, data.time);
+        });
+        // Первичная загрузка логов
+        fetch('/api/logs').then(r => r.json()).then(res => {
+            if (res.success && Array.isArray(res.logs)) {
+                res.logs.slice(0,100).reverse().forEach(l => appendLog(l.message, l.time));
+            }
+        }).catch(()=>{});
+
+        // Функции управления кошельками
+        async function addWallet() {
+            const privateKey = document.getElementById('privateKeyInput').value.trim();
+            if (!privateKey) {
+                showStatus('walletList', 'Введите приватный ключ', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/wallet/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ privateKey })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    wallets.push(result.wallet);
+                    updateWalletList();
+                    document.getElementById('privateKeyInput').value = '';
+                    showStatus('walletList', 'Кошелек добавлен', 'success');
+                } else {
+                    showStatus('walletList', result.error, 'error');
+                }
+            } catch (error) {
+                showStatus('walletList', 'Ошибка добавления кошелька', 'error');
+            }
+        }
+
+        function updateWalletList() {
+            const walletList = document.getElementById('walletList');
+            walletList.innerHTML = '';
+
+            wallets.forEach((wallet, index) => {
+                const walletDiv = document.createElement('div');
+                walletDiv.className = 'wallet-item';
+                walletDiv.innerHTML = `
+                    <div class="wallet-address">${wallet.address}</div>
+                    <div class="wallet-balance">${wallet.balance} ETH</div>
+                    <button class="btn" onclick="selectWallet(${index})">Выбрать</button>
+                    <button class="btn btn-danger" onclick="removeWallet(${index})">Удалить</button>
+                `;
+                walletList.appendChild(walletDiv);
+            });
+
+            updateWalletSelects();
+        }
+
+        function selectWallet(index) {
+            wallets.forEach((_, i) => {
+                const walletItem = document.querySelectorAll('.wallet-item')[i];
+                if (i === index) {
+                    walletItem.classList.add('active');
+                } else {
+                    walletItem.classList.remove('active');
+                }
+            });
+        }
+
+        function removeWallet(index) {
+            wallets.splice(index, 1);
+            updateWalletList();
+            saveWallets();
+        }
+
+        function updateWalletSelects() {
+            const selects = ['deployWallet', 'tradeWallet', 'orderWallet'];
+            selects.forEach(selectId => {
+                const select = document.getElementById(selectId);
+                select.innerHTML = '<option value="">Выберите кошелек</option>';
+                wallets.forEach((wallet, index) => {
+                    const option = document.createElement('option');
+                    option.value = index;
+                    option.textContent = `${wallet.address} (${wallet.balance} ETH)`;
+                    select.appendChild(option);
+                });
+            });
+        }
+
+        function saveWallets() {
+            localStorage.setItem('zapWallets', JSON.stringify(wallets));
+        }
+
+        function loadWallets() {
+            const saved = localStorage.getItem('zapWallets');
+            if (saved) {
+                wallets = JSON.parse(saved);
+                updateWalletList();
+            }
+        }
+
+        // Деплой контракта
+        async function deployContract() {
+            const walletIndex = document.getElementById('deployWallet').value;
+            const tokenAddress = document.getElementById('tokenAddress').value;
+            const lpAddress = document.getElementById('lpAddress').value;
+            const routerAddress = document.getElementById('routerAddress').value;
+
+            if (!walletIndex || !tokenAddress || !lpAddress) {
+                showStatus('deployStatus', 'Заполните все поля', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/deploy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        walletIndex: parseInt(walletIndex),
+                        tokenAddress,
+                        lpAddress,
+                        routerAddress
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    showStatus('deployStatus', `УСПЕШНО: Контракт задеплоен по адресу ${result.address}`, 'success');
+                } else {
+                    showStatus('deployStatus', result.error, 'error');
+                }
+            } catch (error) {
+                showStatus('deployStatus', 'Ошибка деплоя', 'error');
+            }
+        }
+
+        // Ручная торговля
+        async function manualBuy() {
+            const walletIndex = document.getElementById('tradeWallet').value;
+            const zapAddress = document.getElementById('zapAddress').value;
+            const buyAmount = document.getElementById('buyAmount').value;
+
+            if (!walletIndex || !zapAddress || !buyAmount) {
+                showStatus('tradeStatus', 'Заполните все поля', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/trade/buy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        walletIndex: parseInt(walletIndex),
+                        zapAddress,
+                        buyAmount
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    showStatus('tradeStatus', 'Транзакция отправлена', 'info');
+                } else {
+                    showStatus('tradeStatus', result.error, 'error');
+                }
+            } catch (error) {
+                showStatus('tradeStatus', 'Ошибка покупки', 'error');
+            }
+        }
+
+        async function manualSell() {
+            const walletIndex = document.getElementById('tradeWallet').value;
+            const zapAddress = document.getElementById('zapAddress').value;
+
+            if (!walletIndex || !zapAddress) {
+                showStatus('tradeStatus', 'Заполните все поля', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/trade/sell', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        walletIndex: parseInt(walletIndex),
+                        zapAddress
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    showStatus('tradeStatus', 'Транзакция отправлена', 'info');
+                } else {
+                    showStatus('tradeStatus', result.error, 'error');
+                }
+            } catch (error) {
+                showStatus('tradeStatus', 'Ошибка продажи', 'error');
+            }
+        }
+
+        // Лимитные ордера
+        async function startLimitBuy() {
+            const walletIndex = document.getElementById('orderWallet').value;
+            const tokenAddress = document.getElementById('orderToken').value;
+            const lpPair = document.getElementById('orderLpPair').value;
+            const zapAddress = document.getElementById('orderZapAddress').value;
+            const buyPrice = document.getElementById('buyPrice').value;
+            const buyAmount = document.getElementById('orderBuyAmount').value;
+
+            if (!walletIndex || !tokenAddress || !lpPair || !zapAddress || !buyPrice || !buyAmount) {
+                showStatus('orderStatus', 'Заполните все поля', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/order/start-buy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        walletIndex: parseInt(walletIndex),
+                        tokenAddress,
+                        lpPair,
+                        zapAddress,
+                        buyPrice,
+                        buyAmount
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    showStatus('orderStatus', 'Лимитная покупка запущена', 'success');
+                    activeOrders.set(result.orderId, {
+                        id: result.orderId,
+                        tokenAddress,
+                        buyPrice,
+                        status: 'active'
+                    });
+                    updateActiveOrders();
+                } else {
+                    showStatus('orderStatus', result.error, 'error');
+                }
+            } catch (error) {
+                showStatus('orderStatus', 'Ошибка запуска ордера', 'error');
+            }
+        }
+
+        async function startLimitSell() {
+            const walletIndex = document.getElementById('orderWallet').value;
+            const tokenAddress = document.getElementById('orderToken').value;
+            const lpPair = document.getElementById('orderLpPair').value;
+            const zapAddress = document.getElementById('orderZapAddress').value;
+            const sellPrice = document.getElementById('sellPrice').value;
+
+            if (!walletIndex || !tokenAddress || !lpPair || !zapAddress || !sellPrice) {
+                showStatus('orderStatus', 'Заполните все поля', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/order/start-sell', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        walletIndex: parseInt(walletIndex),
+                        tokenAddress,
+                        lpPair,
+                        zapAddress,
+                        sellPrice
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    showStatus('orderStatus', 'Лимитная продажа запущена', 'success');
+                    activeOrders.set(result.orderId, {
+                        id: result.orderId,
+                        tokenAddress,
+                        sellPrice,
+                        status: 'active'
+                    });
+                    updateActiveOrders();
+                } else {
+                    showStatus('orderStatus', result.error, 'error');
+                }
+            } catch (error) {
+                showStatus('orderStatus', 'Ошибка запуска ордера', 'error');
+            }
+        }
+
+        async function stopLimitOrder() {
+            // Остановка всех активных ордеров
+            for (const [orderId, order] of activeOrders) {
+                try {
+                    await fetch('/api/order/stop', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ orderId })
+                    });
+                } catch (error) {
+                    console.error('Ошибка остановки ордера:', error);
+                }
+            }
+            
+            activeOrders.clear();
+            updateActiveOrders();
+            showStatus('orderStatus', 'Все ордера остановлены', 'info');
+        }
+
+        function updateActiveOrders() {
+            const container = document.getElementById('activeOrders');
+            container.innerHTML = '';
+
+            if (activeOrders.size === 0) {
+                container.innerHTML = '<p>Нет активных ордеров</p>';
+                return;
+            }
+
+            activeOrders.forEach((order, orderId) => {
+                const orderDiv = document.createElement('div');
+                orderDiv.className = 'order-status';
+                orderDiv.innerHTML = `
+                    <div>
+                        <strong>Ордер #${orderId}</strong><br>
+                        Токен: ${order.tokenAddress}<br>
+                        Покупка: ≤ ${order.buyPrice} ETH | Продажа: ≥ ${order.sellPrice} ETH
+                    </div>
+                    <div>
+                        <span class="status ${order.status === 'active' ? 'success' : 'error'}">${order.status}</span>
+                    </div>
+                `;
+                container.appendChild(orderDiv);
+            });
+        }
+
+        function updatePriceHistory(data) {
+            const history = document.getElementById('priceHistory');
+            const time = new Date().toLocaleTimeString();
+            history.innerHTML = `<div>${time}: ${data.price.toFixed(8)} ETH</div>` + history.innerHTML;
+            
+            // Ограничиваем историю 10 записями
+            const lines = history.children;
+            if (lines.length > 10) {
+                history.removeChild(lines[lines.length - 1]);
+            }
+        }
+
+        function updateOrderStatus(data) {
+            if (activeOrders.has(data.orderId)) {
+                const order = activeOrders.get(data.orderId);
+                order.status = data.status;
+                updateActiveOrders();
+            }
+        }
+
+        function showStatus(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="status ${type}">${message}</div>`;
+            setTimeout(() => {
+                element.innerHTML = '';
+            }, 5000);
+        }
+
+        function appendLog(message, time) {
+            const el = document.getElementById('appLogs');
+            const ts = new Date(time || Date.now()).toLocaleTimeString();
+            const line = document.createElement('div');
+            line.textContent = `[${ts}] ${message}`;
+            el.prepend(line);
+            // Ограничиваем 100 строк
+            while (el.children.length > 100) el.removeChild(el.lastChild);
+        }
+    </script>
+</body>
+</html>
