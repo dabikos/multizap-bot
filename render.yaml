@@ -3,13 +3,15 @@ services:
     name: multizap-web
     env: node
     plan: free
-    buildCommand: npm ci && npm run compile
+    buildCommand: npm ci --include=dev && npm run compile
     startCommand: npm run web
     autoDeploy: true
     healthCheckPath: /
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NPM_CONFIG_PRODUCTION
+        value: "false"
       - key: RPC_URL
         sync: false
       - key: CHAIN_ID
@@ -27,12 +29,14 @@ services:
     name: multizap-bot
     env: node
     plan: free
-    buildCommand: npm ci && npm run compile
+    buildCommand: npm ci --include=dev && npm run compile
     startCommand: npm run bot
     autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NPM_CONFIG_PRODUCTION
+        value: "false"
       - key: RPC_URL
         sync: false
       - key: CHAIN_ID
