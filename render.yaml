@@ -1,0 +1,48 @@
+services:
+  - type: web
+    name: multizap-web
+    env: node
+    plan: free
+    buildCommand: npm ci && npm run compile
+    startCommand: npm run web
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RPC_URL
+        sync: false
+      - key: CHAIN_ID
+        sync: false
+      - key: ROUTER_ADDRESS
+        sync: false
+      - key: FACTORY_ADDRESS
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: PRIVATE_KEY
+        sync: false
+
+  - type: worker
+    name: multizap-bot
+    env: node
+    plan: free
+    buildCommand: npm ci && npm run compile
+    startCommand: npm run bot
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RPC_URL
+        sync: false
+      - key: CHAIN_ID
+        sync: false
+      - key: ROUTER_ADDRESS
+        sync: false
+      - key: FACTORY_ADDRESS
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: PRIVATE_KEY
+        sync: false
+

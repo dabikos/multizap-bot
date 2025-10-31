@@ -41,15 +41,15 @@ function getContractInterface() {
 }
 
 async function main() {
-  const rpcUrl = 'https://eth-mainnet.g.alchemy.com/v2/x3twrYyq0NHf4x7oZSKKcQl9ehTwS4l9';
+  const rpcUrl = 'https://bsc-dataseed1.binance.org';
   const { abi } = getContractInterface();
 
   const privateKey = await getPrivateKeyInteractive();
   const multiZapAddress = await prompt('Адрес развернутого MultiZap: ');
   const tokenAddress = await prompt('Адрес токена для zap-in: ');
-  const amountEthStr = await prompt('Сумма ETH для zap-in (например 0.01): ');
+  const amountBnbStr = await prompt('Сумма BNB для zap-in (например 0.01): ');
 
-  if (!privateKey || !multiZapAddress || !tokenAddress || !amountEthStr) {
+  if (!privateKey || !multiZapAddress || !tokenAddress || !amountBnbStr) {
     console.error('Ошибка: все поля обязательны');
     process.exit(1);
   }
@@ -75,20 +75,20 @@ async function main() {
     process.exit(1);
   }
 
-  const amountWei = ethers.parseEther(amountEthStr);
+  const amountWei = ethers.parseEther(amountBnbStr);
 
   // Для стабильной работы ликвидности ставим минимумы = 0 на этапе addLiquidity.
   // Слиппейдж 4% применяем только к свопу, но без оффчейн-квоты оставляем 0.
   const amountOutMinToken = 0n;
   const amountTokenMin = 0n;
-  const amountETHMin = 0n;
+  const amountBnbMin = 0n;
 
   try {
     const tx = await multiZap.zapIn(
       tokenAddress,
       amountOutMinToken,
       amountTokenMin,
-      amountETHMin,
+      amountBnbMin,
       { value: amountWei }
     );
     console.log('Транзакция отправлена:', tx.hash);

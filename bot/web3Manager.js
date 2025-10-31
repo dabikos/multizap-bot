@@ -58,19 +58,19 @@ class Web3Manager {
       console.log('Router Address:', config.ROUTER_ADDRESS);
       console.log('Factory Address:', config.FACTORY_ADDRESS);
       console.log('Wallet Address:', this.wallet.address);
-      
+
       const gasParams = await this.getGasParams();
       console.log('Gas params:', gasParams);
-      
+
       const MultiZapFactory = new ethers.ContractFactory(this.abi, this.bytecode, this.wallet);
       const multiZap = await MultiZapFactory.deploy(
-        config.ROUTER_ADDRESS, 
-        config.FACTORY_ADDRESS,
+        ethers.getAddress(config.ROUTER_ADDRESS),
+        ethers.getAddress(config.FACTORY_ADDRESS),
         gasParams
       );
       await multiZap.waitForDeployment();
       const address = await multiZap.getAddress();
-      
+
       this.multiZapContract = multiZap;
       return address;
     } catch (error) {
@@ -101,6 +101,13 @@ class Web3Manager {
       throw new Error('Контракт не подключен');
     }
 
+    if (!ethers.isAddress(tokenAddress)) {
+      throw new Error('Неверный адрес токена');
+    }
+    if (!ethers.isAddress(lpTokenAddress)) {
+      throw new Error('Неверный адрес LP токена');
+    }
+
     try {
       const gasParams = await this.getGasParams();
       const tx = await this.multiZapContract.addToken(tokenAddress, lpTokenAddress, gasParams);
@@ -114,6 +121,10 @@ class Web3Manager {
   async addTokenAuto(tokenAddress) {
     if (!this.multiZapContract) {
       throw new Error('Контракт не подключен');
+    }
+
+    if (!ethers.isAddress(tokenAddress)) {
+      throw new Error('Неверный адрес токена');
     }
 
     try {
@@ -130,6 +141,10 @@ class Web3Manager {
       throw new Error('Контракт не подключен');
     }
 
+    if (!ethers.isAddress(tokenAddress)) {
+      throw new Error('Неверный адрес токена');
+    }
+
     try {
       const tx = await this.multiZapContract.removeToken(tokenAddress);
       await tx.wait();
@@ -142,6 +157,10 @@ class Web3Manager {
   async setTokenStatus(tokenAddress, isActive) {
     if (!this.multiZapContract) {
       throw new Error('Контракт не подключен');
+    }
+
+    if (!ethers.isAddress(tokenAddress)) {
+      throw new Error('Неверный адрес токена');
     }
 
     try {
@@ -158,30 +177,35 @@ class Web3Manager {
       throw new Error('Контракт не подключен');
     }
 
+    if (!ethers.isAddress(tokenAddress)) {
+      throw new Error('Неверный адрес токена');
+    }
+
+    if (amountEth <= 0) {
+      throw new Error('Сумма должна быть больше 0');
+    }
+
     try {
       const amountWei = ethers.parseEther(amountEth.toString());
       const gasParams = await this.getGasParams();
-      
-      // Используем фиксированный slippage 7%
-      const finalSlippage = parseFloat(slippagePercent);
-      
-      // Рассчитываем минимальные количества с учетом slippage
+
+      // 20% slippage - используем 80% от сумм
       const halfAmount = amountWei / 2n;
-      const amountOutMinToken = this.calculateSlippage(halfAmount, finalSlippage);
-      const amountTokenMin = this.calculateSlippage(halfAmount, finalSlippage);
-      const amountETHMin = this.calculateSlippage(halfAmount, finalSlippage);
-      
-      console.log(`Slippage: ${finalSlippage}% (фиксированный)`);
-      console.log(`Amount Out Min Token: ${ethers.formatEther(amountOutMinToken)} ETH`);
-      console.log(`Amount Token Min: ${ethers.formatEther(amountTokenMin)} ETH`);
-      console.log(`Amount ETH Min: ${ethers.formatEther(amountETHMin)} ETH`);
-      
+      const amountOutMinToken = 0n;
+      const amountTokenMin = 0n;
+      const amountBNBMin = 0n;
+
+      console.log(`Slippage: 20%`);
+      console.log(`Amount Out Min Token: ${ethers.formatEther(amountOutMinToken)} BNB`);
+      console.log(`Amount Token Min: ${ethers.formatEther(amountTokenMin)} BNB`);
+      console.log(`Amount BNB Min: ${ethers.formatEther(amountBNBMin)} BNB`);
+
       const tx = await this.multiZapContract.zapIn(
         tokenAddress,
         amountOutMinToken,
         amountTokenMin,
-        amountETHMin,
-        { 
+        amountBNBMin,
+        {
           value: amountWei,
           ...gasParams
         }
@@ -189,7 +213,7 @@ class Web3Manager {
       await tx.wait();
       return tx.hash;
     } catch (error) {
-      throw new Error(`Ошибка zap-in: ${error.message}`);
+      throw new Error(`Ошибка zap-in: Транзакция отклонилась`);
     }
   }
 
@@ -198,17 +222,20 @@ class Web3Manager {
       throw new Error('Контракт не подключен');
     }
 
+    if (!ethers.isAddress(tokenAddress)) {
+      throw new Error('Неверный адрес токена');
+    }
+
     try {
       const gasParams = await this.getGasParams();
-      
-      // Для exitAndSell используем 0% slippage для максимальной гибкости
+
       console.log(`Slippage: 0% (для exitAndSell - максимальная гибкость)`);
-      
+
       const tx = await this.multiZapContract.exitAndSell(
         tokenAddress,
         0, // amountTokenMin - 0 для максимальной гибкости
-        0, // amountETHMin - 0 для максимальной гибкости  
-        0, // amountOutMinETH - 0 для максимальной гибкости
+        0, // amountBNBMin - 0 для максимальной гибкости
+        0, // amountOutMinBNB - 0 для максимальной гибкости
         gasParams
       );
       await tx.wait();
@@ -218,10 +245,13 @@ class Web3Manager {
     }
   }
 
-
   async getTokenInfo(tokenAddress) {
     if (!this.multiZapContract) {
       throw new Error('Контракт не подключен');
+    }
+
+    if (!ethers.isAddress(tokenAddress)) {
+      throw new Error('Неверный адрес токена');
     }
 
     try {
@@ -248,6 +278,10 @@ class Web3Manager {
       throw new Error('Контракт не подключен');
     }
 
+    if (!ethers.isAddress(tokenAddress)) {
+      throw new Error('Неверный адрес токена');
+    }
+
     try {
       const balance = await this.multiZapContract.getLpBalance(tokenAddress);
       return ethers.formatEther(balance);
@@ -259,6 +293,10 @@ class Web3Manager {
   async getTokenBalance(tokenAddress) {
     if (!this.multiZapContract) {
       throw new Error('Контракт не подключен');
+    }
+
+    if (!ethers.isAddress(tokenAddress)) {
+      throw new Error('Неверный адрес токена');
     }
 
     try {
@@ -304,72 +342,41 @@ class Web3Manager {
 
   async getGasParams() {
     try {
-      // Получаем текущие газовые параметры
+      // BSC не поддерживает EIP-1559, используем только gasPrice
       const feeData = await this.provider.getFeeData();
       
-      // Используем EIP-1559 параметры если доступны
-      if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
-        return {
-          maxFeePerGas: feeData.maxFeePerGas,
-          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
-          gasLimit: config.GAS_LIMIT
-        };
-      } else {
-        // Fallback на gasPrice если EIP-1559 не поддерживается
-        return {
-          gasPrice: feeData.gasPrice,
-          gasLimit: config.GAS_LIMIT
-        };
-      }
+      return {
+        gasPrice: config.GAS_PRICE || feeData.gasPrice,
+        gasLimit: config.GAS_LIMIT
+      };
     } catch (error) {
       console.error('Ошибка получения газовых параметров:', error);
-      // Fallback значения
+      // Fallback значения для BSC
       return {
-        maxFeePerGas: config.MAX_FEE_PER_GAS,
-        maxPriorityFeePerGas: config.MAX_PRIORITY_FEE_PER_GAS,
-        gasLimit: config.GAS_LIMIT
+        gasPrice: config.GAS_PRICE || '500000000', // 0.5 gwei
+        gasLimit: config.GAS_LIMIT || '2000000'
       };
     }
   }
 
-
   calculateSlippage(amount, slippagePercent = config.DEFAULT_SLIPPAGE) {
-    // Конвертируем slippage в число
-    const slippage = parseFloat(slippagePercent);
-    
-    // Проверяем лимиты
-    const minSlippage = parseFloat(config.MIN_SLIPPAGE);
-    const maxSlippage = parseFloat(config.MAX_SLIPPAGE);
-    
-    if (slippage < minSlippage) {
-      console.warn(`Slippage ${slippage}% меньше минимума ${minSlippage}%, используем минимум`);
-      return amount * (100 - minSlippage) / 100;
-    }
-    
-    if (slippage > maxSlippage) {
-      console.warn(`Slippage ${slippage}% больше максимума ${maxSlippage}%, используем максимум`);
-      return amount * (100 - maxSlippage) / 100;
-    }
-    
-    // Рассчитываем минимальное количество с учетом slippage
-    return amount * (100 - slippage) / 100;
+    // Максимальная гибкость - возвращаем 0
+    return 0n;
   }
 
   async getEthPrice() {
     try {
-      // Получаем цену ETH через CoinGecko API
       const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
       const data = await response.json();
       return data.ethereum.usd;
     } catch (error) {
       console.error('Ошибка получения цены ETH:', error);
-      return 3000; // Fallback цена
+      return 3000;
     }
   }
 
   async getTokenPrice(tokenAddress) {
     try {
-      // Получаем цену токена через Uniswap V2
       const tokenContract = new ethers.Contract(tokenAddress, [
         'function decimals() view returns (uint8)',
         'function symbol() view returns (string)',
@@ -384,8 +391,7 @@ class Web3Manager {
 
       const wethAddress = await routerContract.WETH();
       const path = [tokenAddress, wethAddress];
-      
-      // Сначала получаем decimals токена
+
       const [decimals, symbol, name, totalSupply, ethPriceInUsd] = await Promise.all([
         tokenContract.decimals(),
         tokenContract.symbol(),
@@ -394,18 +400,14 @@ class Web3Manager {
         this.getEthPrice()
       ]);
 
-      // Используем правильное количество десятичных знаков для 1 токена
       const amountIn = ethers.parseUnits('1', decimals);
-      
       const amounts = await routerContract.getAmountsOut(amountIn, path);
       const priceInEth = ethers.formatEther(amounts[1]);
-
       const formattedSupply = ethers.formatUnits(totalSupply, decimals);
-      
-      // Рассчитываем цену в долларах и маркеткап
+
       const priceInUsd = parseFloat(priceInEth) * ethPriceInUsd;
       const marketCapInUsd = priceInUsd * parseFloat(formattedSupply);
-      
+
       return {
         price: parseFloat(priceInEth),
         priceUsd: priceInUsd,

@@ -12,8 +12,9 @@ module.exports = {
   },
   networks: {
     hardhat: {},
-    mainnet: {
-      url: "https://eth-mainnet.g.alchemy.com/v2/x3twrYyq0NHf4x7oZSKKcQl9ehTwS4l9"
+    bsc: {
+      url: "https://bsc-dataseed1.binance.org",
+      chainId: 56
     }
   }
 };

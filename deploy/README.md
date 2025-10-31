@@ -1,4 +1,4 @@
-# 🚀 MultiZap Bot - Деплой на сервер
+# 🚀 MultiZap Bot - Деплой на сервер (BSC)
 
 ## Быстрый старт
 
@@ -34,25 +34,24 @@ notepad .env
 npm run pm2:start
 ```
 
-## Настройка .env файла
+## Настройка .env файла для BSC
 
 ```env
 # Telegram Bot
 TELEGRAM_BOT_TOKEN=your_bot_token_here
 
-# Ethereum Network  
-RPC_URL=https://eth-mainnet.g.alchemy.com/v2/your_api_key
-CHAIN_ID=1
-ROUTER_ADDRESS=0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D
-FACTORY_ADDRESS=0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f
+# BSC Network Configuration  
+RPC_URL=https://bsc-dataseed1.binance.org
+CHAIN_ID=56
+ROUTER_ADDRESS=0x10ED43C718714eb63d5aA57B78B54704E256024E
+FACTORY_ADDRESS=0xcA143Ce0Fe65960E6Aa4D42C8D3cE161c2B6604f
 
 # Private Key (ОСТОРОЖНО!)
 PRIVATE_KEY=your_private_key_here
 
-# Gas Settings
-MAX_FEE_PER_GAS=50000000000
-MAX_PRIORITY_FEE_PER_GAS=2000000000
-GAS_LIMIT=500000
+# Gas Settings (BSC uses legacy gas)
+GAS_PRICE=5000000000
+GAS_LIMIT=2000000
 
 # Slippage
 DEFAULT_SLIPPAGE=7

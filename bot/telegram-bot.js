@@ -44,12 +44,12 @@ class TelegramBotManager {
     this.bot.onText(/\/start/, (msg) => {
       const chatId = msg.chat.id;
       const welcomeMessage = `
-🚀 Добро пожаловать в MultiZap Bot!
+🚀 Добро пожаловать в MultiZap Bot для BSC!
 
 Этот бот позволяет вам:
-• Создать один контракт для работы с разными токенами
+• Создать один контракт для работы с разными токенами на BSC
 • Управлять токенами через Telegram
-• Выполнять zap-in и exit операции
+• Выполнять zap-in и exit операции с BNB
 
 📋 **Быстрый доступ к командам:**
 Используйте кнопку "📋" рядом с полем ввода для просмотра всех команд!
@@ -318,7 +318,7 @@ class TelegramBotManager {
             { parse_mode: 'Markdown' }
           );
         } catch (error) {
-          this.bot.sendMessage(chatId, `❌ Ошибка zap-in: ${error.message}`);
+          this.bot.sendMessage(chatId, `❌ Ошибка zap-in: ${error.message.substring(0, 100)}...`);
         }
       });
     });
@@ -1134,7 +1134,7 @@ class TelegramBotManager {
           { parse_mode: 'Markdown' }
         );
       } catch (error) {
-        this.bot.sendMessage(chatId, `❌ Ошибка zap-in: ${error.message}`);
+        this.bot.sendMessage(chatId, `❌ Ошибка zap-in: ${error.message.substring(0, 100)}...`);
       }
     });
   }

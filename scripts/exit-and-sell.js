@@ -52,7 +52,7 @@ function applySlippage(value, slippagePct, direction) {
 }
 
 async function main() {
-  const rpcUrl = 'https://eth-mainnet.g.alchemy.com/v2/x3twrYyq0NHf4x7oZSKKcQl9ehTwS4l9';
+  const rpcUrl = 'https://bsc-dataseed1.binance.org';
   const { abi } = getContractInterface();
 
   const privateKey = await getPrivateKeyInteractive();
@@ -70,13 +70,13 @@ async function main() {
 
   // 4% slippage
   const amountTokenMin = 0n;
-  const amountETHMin = 0n;
-  const amountOutMinETH = 0n;
+  const amountBnbMin = 0n;
+  const amountOutMinBnb = 0n;
 
   const tx = await zap.exitAndSell(
     amountTokenMin,
-    amountETHMin,
-    amountOutMinETH
+    amountBnbMin,
+    amountOutMinBnb
   );
   console.log('Транзакция отправлена:', tx.hash);
   await tx.wait();

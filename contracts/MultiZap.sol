@@ -100,8 +100,8 @@ contract MultiZap is Ownable {
         require(_token != address(0), "INVALID_TOKEN");
         require(supportedTokens[_token].token == address(0), "TOKEN_ALREADY_EXISTS");
 
-        address weth = router.WETH();
-        address lpToken = factory.getPair(_token, weth);
+        address wbnb = router.WETH();
+        address lpToken = factory.getPair(_token, wbnb);
         require(lpToken != address(0), "LP_PAIR_NOT_FOUND");
 
         supportedTokens[_token] = TokenInfo({
@@ -167,15 +167,15 @@ contract MultiZap is Ownable {
      * @param _token Адрес токена
      * @param amountOutMinToken Минимальное количество токенов при свопе
      * @param amountTokenMin Минимальное количество токенов при добавлении ликвидности
-     * @param amountETHMin Минимальное количество ETH при добавлении ликвидности
+     * @param amountBNBMin Минимальное количество BNB при добавлении ликвидности
      */
     function zapIn(
         address _token,
         uint amountOutMinToken,
         uint amountTokenMin,
-        uint amountETHMin
+        uint amountBNBMin
     ) external payable onlyOwner {
-        require(msg.value > 0, "NO_ETH");
+        require(msg.value > 0, "NO_BNB");
         require(supportedTokens[_token].token != address(0), "TOKEN_NOT_SUPPORTED");
         require(supportedTokens[_token].isActive, "TOKEN_INACTIVE");
 
@@ -186,7 +186,7 @@ contract MultiZap is Ownable {
         path[0] = router.WETH();
         path[1] = _token;
 
-        // Сначала свопаем половину ETH на токены
+        // Сначала свопаем половину BNB на токены
         router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: half}(
             amountOutMinToken,
             path,
@@ -206,7 +206,7 @@ contract MultiZap is Ownable {
             _token,
             tokenBal,
             amountTokenMin,
-            amountETHMin,
+            amountBNBMin,
             address(this),
             block.timestamp + 300
         );
@@ -217,14 +217,14 @@ contract MultiZap is Ownable {
      * @dev Выполняет exit и sell для указанного токена
      * @param _token Адрес токена
      * @param amountTokenMin Минимальное количество токенов при удалении ликвидности
-     * @param amountETHMin Минимальное количество ETH при удалении ликвидности
-     * @param amountOutMinETH Минимальное количество ETH при свопе токенов
+     * @param amountBNBMin Минимальное количество BNB при удалении ликвидности
+     * @param amountOutMinBNB Минимальное количество BNB при свопе токенов
      */
     function exitAndSell(
         address _token,
         uint amountTokenMin,
-        uint amountETHMin,
-        uint amountOutMinETH
+        uint amountBNBMin,
+        uint amountOutMinBNB
     ) external onlyOwner {
         require(supportedTokens[_token].token != address(0), "TOKEN_NOT_SUPPORTED");
         
@@ -240,7 +240,7 @@ contract MultiZap is Ownable {
             _token,
             lpBal,
             amountTokenMin,
-            amountETHMin,
+            amountBNBMin,
             address(this),
             block.timestamp + 300
         );
@@ -255,17 +255,17 @@ contract MultiZap is Ownable {
             // Даем разрешение роутеру на использование токенов
             IERC20(_token).approve(address(router), tokenBal);
 
-            // Свопаем токены на ETH
+            // Свопаем токены на BNB
             router.swapExactTokensForETHSupportingFeeOnTransferTokens(
                 tokenBal,
-                amountOutMinETH,
+                amountOutMinBNB,
                 path,
                 address(this),
                 block.timestamp + 300
             );
         }
 
-        // Переводим весь ETH владельцу
+        // Переводим весь BNB владельцу
         payable(owner()).transfer(address(this).balance);
     }
 

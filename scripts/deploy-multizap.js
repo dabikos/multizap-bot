@@ -3,9 +3,9 @@ const { ethers } = require('hardhat');
 const { getPrivateKeyInteractive } = require('./util-session');
 
 async function main() {
-  const rpcUrl = 'https://eth-mainnet.g.alchemy.com/v2/x3twrYyq0NHf4x7oZSKKcQl9ehTwS4l9';
+  const rpcUrl = 'https://bsc-dataseed1.binance.org';
   const privateKey = await getPrivateKeyInteractive();
-  const router = await prompt('Адрес роутера (например, Uniswap V2): ');
+  const router = await prompt('Адрес роутера (например, PancakeSwap V2): ');
 
   if (!privateKey || !router) {
     console.error('Ошибка: все поля обязательны');
@@ -15,7 +15,7 @@ async function main() {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const wallet = new ethers.Wallet(privateKey, provider);
 
-  console.log('Развертывание контракта MultiZap...');
+  console.log('Развертывание контракта MultiZap на BSC...');
   const MultiZapFactory = await ethers.getContractFactory('MultiZap', wallet);
   const multiZap = await MultiZapFactory.deploy(router);
   await multiZap.waitForDeployment();

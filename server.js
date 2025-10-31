@@ -15,7 +15,7 @@ const io = socketIo(server, {
   }
 });
 
-const PORT = 3000;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const RPC_URL = 'https://eth-mainnet.g.alchemy.com/v2/x3twrYyq0NHf4x7oZSKKcQl9ehTwS4l9';
 
 // Middleware
