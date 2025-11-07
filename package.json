@@ -18,7 +18,8 @@
     "limit": "node scripts/limit-order.js",
     "logout": "node scripts/logout.js",
     "web": "node server.js",
-    "start": "npm run compile && npm run web"
+    "start": "npm run compile && npm run web",
+    "test-multichain": "node test-multichain.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

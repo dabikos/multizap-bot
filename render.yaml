@@ -20,6 +20,25 @@ services:
         sync: false
       - key: FACTORY_ADDRESS
         sync: false
+      # Multichain support
+      - key: ETH_RPC_URL
+        sync: false
+      - key: BSC_RPC_URL
+        sync: false
+      - key: BASE_RPC_URL
+        sync: false
+      - key: ETH_ROUTER_ADDRESS
+        sync: false
+      - key: BSC_ROUTER_ADDRESS
+        sync: false
+      - key: BASE_ROUTER_ADDRESS
+        sync: false
+      - key: ETH_FACTORY_ADDRESS
+        sync: false
+      - key: BSC_FACTORY_ADDRESS
+        sync: false
+      - key: BASE_FACTORY_ADDRESS
+        sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: PRIVATE_KEY
@@ -44,6 +63,25 @@ services:
       - key: ROUTER_ADDRESS
         sync: false
       - key: FACTORY_ADDRESS
+        sync: false
+      # Multichain support
+      - key: ETH_RPC_URL
+        sync: false
+      - key: BSC_RPC_URL
+        sync: false
+      - key: BASE_RPC_URL
+        sync: false
+      - key: ETH_ROUTER_ADDRESS
+        sync: false
+      - key: BSC_ROUTER_ADDRESS
+        sync: false
+      - key: BASE_ROUTER_ADDRESS
+        sync: false
+      - key: ETH_FACTORY_ADDRESS
+        sync: false
+      - key: BSC_FACTORY_ADDRESS
+        sync: false
+      - key: BASE_FACTORY_ADDRESS
         sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
