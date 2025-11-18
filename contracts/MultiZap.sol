@@ -64,6 +64,7 @@ contract MultiZap is Ownable {
     event TokenAdded(address indexed token, address indexed lpToken);
     event TokenRemoved(address indexed token);
     event TokenStatusChanged(address indexed token, bool isActive);
+    event LiquidityWithdrawn(address indexed token, uint256 lpAmount, uint256 tokenAmount, uint256 nativeAmount);
 
     constructor(address _router, address _factory) Ownable(msg.sender) {
         require(_router != address(0), "INVALID_ROUTER");
@@ -267,6 +268,44 @@ contract MultiZap is Ownable {
 
         // Переводим весь BNB владельцу
         payable(owner()).transfer(address(this).balance);
+    }
+
+    /**
+     * @dev Снимает ликвидность без продажи токена
+     * @param _token Адрес токена
+     */
+    function withdrawLiquidity(address _token) external onlyOwner {
+        TokenInfo storage info = supportedTokens[_token];
+        require(info.token != address(0), "TOKEN_NOT_SUPPORTED");
+        require(info.isActive, "TOKEN_INACTIVE");
+
+        address lpToken = info.lpToken;
+        uint lpBal = IERC20(lpToken).balanceOf(address(this));
+        require(lpBal > 0, "NO_LP");
+
+        IERC20(lpToken).approve(address(router), lpBal);
+
+        router.removeLiquidityETHSupportingFeeOnTransferTokens(
+            _token,
+            lpBal,
+            0,
+            0,
+            address(this),
+            block.timestamp + 300
+        );
+
+        uint tokenBal = IERC20(_token).balanceOf(address(this));
+        uint nativeBal = address(this).balance;
+
+        if (tokenBal > 0) {
+            IERC20(_token).safeTransfer(owner(), tokenBal);
+        }
+
+        if (nativeBal > 0) {
+            payable(owner()).transfer(nativeBal);
+        }
+
+        emit LiquidityWithdrawn(_token, lpBal, tokenBal, nativeBal);
     }
 
 

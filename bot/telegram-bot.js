@@ -91,7 +91,8 @@ class TelegramBotManager {
     };
     
     // Ограничиваем длину сообщения (Telegram лимит 4096 символов)
-    const networkConfig = config.getNetworkConfig(this.userManager.getUserNetwork(chatId));
+    const userNetworkName = this.userManager.getUserNetwork(chatId);
+    const networkConfig = config.getNetworkConfig(userNetworkName);
     const nativeCurrency = networkConfig.nativeCurrency;
     let message = `🪙 **${tokenPrice.name} (${tokenPrice.symbol})**\n\n` +
       `📍 Адрес: \`${shortAddress}\`\n` +
@@ -114,8 +115,7 @@ class TelegramBotManager {
     message = this.truncateMessage(message);
     
     // Показываем кнопки с действиями
-    const actionKeyboard = {
-      inline_keyboard: [
+    const actionKeyboardRows = [
         [
           { text: `💰 Купить 0.01 ${networkConfig.nativeCurrency}`, callback_data: `buy_${tokenAddress}_0.01` },
           { text: `💰 Купить 0.05 ${networkConfig.nativeCurrency}`, callback_data: `buy_${tokenAddress}_0.05` }
@@ -134,7 +134,16 @@ class TelegramBotManager {
           { text: '📊 Обновить', callback_data: `select_token_${tokenAddress}` },
           { text: '❌ Отмена', callback_data: 'cancel' }
         ]
-      ]
+    ];
+
+    if (userNetworkName === 'BSC' && hasLpBalance) {
+      actionKeyboardRows.splice(3, 0, [
+        { text: '🧊 Забрать ликвидность', callback_data: `withdraw_liquidity_${tokenAddress}` }
+      ]);
+    }
+
+    const actionKeyboard = {
+      inline_keyboard: actionKeyboardRows
     };
     
     if (messageId) {
@@ -937,6 +946,89 @@ class TelegramBotManager {
           this.bot.answerCallbackQuery(callbackQuery.id, { text: 'Введите сумму' });
         }
         
+        // Обработка вывода ликвидности (без продажи)
+        else if (data.startsWith('withdraw_liquidity_')) {
+          const tokenAddress = data.replace('withdraw_liquidity_', '');
+          const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+          const userNetworkName = this.userManager.getUserNetwork(chatId);
+
+          if (userNetworkName !== 'BSC') {
+            await this.bot.answerCallbackQuery(callbackQuery.id, { text: 'Доступно только в сети BSC' });
+            return;
+          }
+
+          const web3Manager = this.getWeb3ManagerForUser(chatId);
+          web3Manager.setPrivateKey(user.privateKey);
+          const userContract = this.userManager.getUserContract(chatId);
+          web3Manager.setContractAddress(userContract);
+
+          await this.bot.editMessageText(
+            `⏳ Снимаю ликвидность для токена \`${shortAddress}\` без продажи...\n\n` +
+            `💡 После операции все токены и BNB будут отправлены на ваш кошелек`,
+            {
+              chat_id: chatId,
+              message_id: callbackQuery.message.message_id,
+              parse_mode: 'Markdown'
+            }
+          );
+
+          try {
+            const txHash = await web3Manager.withdrawLiquidity(tokenAddress);
+            const explorerUrl = this.getExplorerUrl(chatId);
+            const networkConfig = config.getNetworkConfig(userNetworkName);
+
+            await this.bot.editMessageText(
+              `✅ Ликвидность успешно снята!\n\n` +
+              `📍 Токен: \`${shortAddress}\`\n` +
+              `🌐 Сеть: ${networkConfig.name}\n` +
+              `🔗 Транзакция: ${explorerUrl}/tx/${txHash}\n\n` +
+              `💡 LP токены конвертированы в токен + ${networkConfig.nativeCurrency} и отправлены на ваш кошелек`,
+              {
+                chat_id: chatId,
+                message_id: callbackQuery.message.message_id,
+                parse_mode: 'Markdown'
+              }
+            );
+
+            this.bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Ликвидность снята' });
+
+            setTimeout(async () => {
+              try {
+                await this.showTokenPosition(chatId, tokenAddress);
+              } catch (error) {
+                console.error('Ошибка обновления позиции после снятия ликвидности:', error.message);
+              }
+            }, 2000);
+          } catch (error) {
+            let errorMessage = error.message || 'Неизвестная ошибка';
+
+            if (errorMessage.includes('NO_LP')) {
+              errorMessage = `❌ **Нет LP токенов для вывода**\n\n` +
+                `💡 Убедитесь, что у контракта есть LP токены для этого актива.\n` +
+                `📍 Токен: \`${shortAddress}\``;
+            } else if (errorMessage.includes('TOKEN_NOT_SUPPORTED')) {
+              errorMessage = `❌ **Токен не поддерживается**\n\n` +
+                `📍 Токен: \`${shortAddress}\``;
+            } else if (errorMessage.includes('TOKEN_INACTIVE')) {
+              errorMessage = `❌ **Токен неактивен**\n\n` +
+                `📍 Токен: \`${shortAddress}\``;
+            } else {
+              errorMessage = `❌ **Ошибка вывода ликвидности**\n\n${errorMessage}\n\n📍 Токен: \`${shortAddress}\``;
+            }
+
+            await this.bot.editMessageText(
+              errorMessage,
+              {
+                chat_id: chatId,
+                message_id: callbackQuery.message.message_id,
+                parse_mode: 'Markdown'
+              }
+            );
+
+            this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Ошибка вывода' });
+          }
+        }
+
         // Обработка продажи токена
         else if (data.startsWith('sell_')) {
           const tokenAddress = data.replace('sell_', '');
