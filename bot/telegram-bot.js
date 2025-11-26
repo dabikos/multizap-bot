@@ -1719,6 +1719,12 @@ class TelegramBotManager {
           }
         ],
         [
+          { 
+            text: `${currentNetwork === 'MONAD' ? '✅' : ''} Monad (MONAD)`, 
+            callback_data: 'switch_network_MONAD' 
+          }
+        ],
+        [
           { text: '❌ Отмена', callback_data: 'cancel_network' }
         ]
       ]

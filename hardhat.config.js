@@ -15,6 +15,10 @@ module.exports = {
     bsc: {
       url: "https://bsc-dataseed1.binance.org",
       chainId: 56
+    },
+    monad: {
+      url: process.env.MONAD_RPC_URL || "https://rpc-mainnet.monadinfra.com",
+      chainId: 143
     }
   }
 };

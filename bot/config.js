@@ -37,6 +37,18 @@ const NETWORKS = {
     gasPrice: process.env.BASE_GAS_PRICE || null, // null = auto
     gasLimit: process.env.BASE_GAS_LIMIT || '2000000',
     supportsEIP1559: true
+  },
+  MONAD: {
+    name: 'Monad',
+    chainId: 143,
+    rpcUrl: process.env.MONAD_RPC_URL || 'https://monad-mainnet.g.alchemy.com/v2/ToISL-WHSN7SSOY1ujU5d',
+    routerAddress: process.env.MONAD_ROUTER_ADDRESS || '0x26CEb692410c4b3C12D63e01CFc03eEA103fc474', // DYORswap Router
+    factoryAddress: process.env.MONAD_FACTORY_ADDRESS || '0xA9F2c3E18E22F19E6c2ceF49A88c79bcE5b482Ac', // DYORswap Factory
+    explorerUrl: 'https://monadscan.com',
+    nativeCurrency: 'MON',
+    gasPrice: process.env.MONAD_GAS_PRICE || null, // null = auto (Base: 100 Gwei, Max: 102 Gwei, Max Priority: 1 Gwei)
+    gasLimit: process.env.MONAD_GAS_LIMIT || '2000000',
+    supportsEIP1559: true
   }
 };
 
