@@ -42,11 +42,11 @@ const NETWORKS = {
     name: 'Monad',
     chainId: 143,
     rpcUrl: process.env.MONAD_RPC_URL || 'https://monad-mainnet.g.alchemy.com/v2/ToISL-WHSN7SSOY1ujU5d',
-    routerAddress: process.env.MONAD_ROUTER_ADDRESS || '0x26CEb692410c4b3C12D63e01CFc03eEA103fc474', // DYORswap Router
-    factoryAddress: process.env.MONAD_FACTORY_ADDRESS || '0xA9F2c3E18E22F19E6c2ceF49A88c79bcE5b482Ac', // DYORswap Factory
+    routerAddress: process.env.MONAD_ROUTER_ADDRESS || '0x4B2ab38DBF28D31D467aA8993f6c2585981D6804', // Uniswap Router on Monad
+    factoryAddress: process.env.MONAD_FACTORY_ADDRESS || '0x182a927119D56008d921126764bF884221b10f59', // Uniswap Factory on Monad
     explorerUrl: 'https://monadscan.com',
     nativeCurrency: 'MON',
-    gasPrice: process.env.MONAD_GAS_PRICE || null, // null = auto (Base: 100 Gwei, Max: 102 Gwei, Max Priority: 1 Gwei)
+    gasPrice: process.env.MONAD_GAS_PRICE || '100', // 100 gwei (используется как maxFeePerGas для EIP-1559)
     gasLimit: process.env.MONAD_GAS_LIMIT || '2000000',
     supportsEIP1559: true
   }
