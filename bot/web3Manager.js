@@ -492,29 +492,6 @@ class Web3Manager {
     }
   }
 
-  async withdrawLiquidity(tokenAddress) {
-    if (!this.multiZapContract) {
-      throw new Error('Контракт не подключен');
-    }
-
-    if (!ethers.isAddress(tokenAddress)) {
-      throw new Error('Неверный адрес токена');
-    }
-
-    if (this.currentNetwork !== 'BSC') {
-      throw new Error('Вывод ликвидности доступен только в сети BSC');
-    }
-
-    try {
-      const gasParams = await this.getGasParams();
-      const tx = await this.multiZapContract.withdrawLiquidity(tokenAddress, gasParams);
-      await tx.wait();
-      return tx.hash;
-    } catch (error) {
-      throw new Error(`Ошибка вывода ликвидности: ${error.message}`);
-    }
-  }
-
   async getTokenInfo(tokenAddress) {
     if (!this.multiZapContract) {
       throw new Error('Контракт не подключен');
