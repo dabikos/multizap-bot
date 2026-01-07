@@ -22,7 +22,7 @@ const NETWORKS = {
     factoryAddress: process.env.BSC_FACTORY_ADDRESS || '0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73', // PancakeSwap V2 Factory
     explorerUrl: 'https://bscscan.com',
     nativeCurrency: 'BNB',
-    gasPrice: process.env.BSC_GAS_PRICE || '5', // 5 gwei (будет преобразовано в wei)
+    gasPrice: process.env.BSC_GAS_PRICE || '0.05', // 0.05 gwei (будет преобразовано в wei)
     gasLimit: process.env.BSC_GAS_LIMIT || '2000000',
     supportsEIP1559: false
   },

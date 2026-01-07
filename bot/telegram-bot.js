@@ -543,7 +543,12 @@ class TelegramBotManager {
             }
           }, 2000); // Задержка 2 секунды для подтверждения транзакции
         } catch (error) {
-          this.bot.sendMessage(chatId, `❌ Ошибка zap-in: ${error.message.substring(0, 100)}...`);
+          let errorMessage = error.message || 'Неизвестная ошибка';
+          // Обрезаем сообщение если слишком длинное (Telegram лимит 4096 символов)
+          if (errorMessage.length > 4000) {
+            errorMessage = errorMessage.substring(0, 4000) + '...';
+          }
+          this.bot.sendMessage(chatId, `❌ Ошибка zap-in:\n\n${errorMessage}`);
         }
       });
     });
@@ -841,12 +846,13 @@ class TelegramBotManager {
           const userContract = this.userManager.getUserContract(chatId);
           web3Manager.setContractAddress(userContract);
           
+          const networkConfig = config.getNetworkConfig(this.userManager.getUserNetwork(chatId));
           const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
           
           await this.bot.editMessageText(
-            `⏳ Выполняется покупка на ${amount} ETH...\n\n` +
+            `⏳ Выполняется покупка на ${amount} ${networkConfig.nativeCurrency}...\n\n` +
             `📍 Токен: \`${shortAddress}\`\n` +
-            `💰 Сумма: ${amount} ETH`,
+            `💰 Сумма: ${amount} ${networkConfig.nativeCurrency}`,
             {
               chat_id: chatId,
               message_id: callbackQuery.message.message_id,
@@ -854,35 +860,57 @@ class TelegramBotManager {
             }
           );
           
-          const txHash = await web3Manager.zapIn(tokenAddress, amountFloat);
-          
-          const explorerUrl = this.getExplorerUrl(chatId);
-          const networkConfig = config.getNetworkConfig(this.userManager.getUserNetwork(chatId));
-          
-          // Показываем успешную покупку
-          await this.bot.editMessageText(
-            `✅ Покупка выполнена успешно!\n\n` +
-            `📍 Токен: \`${shortAddress}\`\n` +
-            `💰 Сумма: ${amount} ${networkConfig.nativeCurrency}\n` +
-            `🔗 Транзакция: ${explorerUrl}/tx/${txHash}\n\n` +
-            `⏳ Загружаю позицию...`,
-            {
-              chat_id: chatId,
-              message_id: callbackQuery.message.message_id,
-              parse_mode: 'Markdown'
+          try {
+            const txHash = await web3Manager.zapIn(tokenAddress, amountFloat);
+            
+            const explorerUrl = this.getExplorerUrl(chatId);
+            
+            // Показываем успешную покупку
+            await this.bot.editMessageText(
+              `✅ Покупка выполнена успешно!\n\n` +
+              `📍 Токен: \`${shortAddress}\`\n` +
+              `💰 Сумма: ${amount} ${networkConfig.nativeCurrency}\n` +
+              `🔗 Транзакция: ${explorerUrl}/tx/${txHash}\n\n` +
+              `⏳ Загружаю позицию...`,
+              {
+                chat_id: chatId,
+                message_id: callbackQuery.message.message_id,
+                parse_mode: 'Markdown'
+              }
+            );
+            
+            this.bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Покупка выполнена!' });
+            
+            // Открываем позицию токена после покупки
+            setTimeout(async () => {
+              try {
+                await this.showTokenPosition(chatId, tokenAddress);
+              } catch (error) {
+                console.error('Ошибка открытия позиции после покупки:', error.message);
+              }
+            }, 2000); // Задержка 2 секунды для подтверждения транзакции
+          } catch (error) {
+            let errorMessage = error.message || 'Неизвестная ошибка';
+            // Обрезаем сообщение если слишком длинное (Telegram лимит 4096 символов)
+            if (errorMessage.length > 4000) {
+              errorMessage = errorMessage.substring(0, 4000) + '...';
             }
-          );
-          
-          this.bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Покупка выполнена!' });
-          
-          // Открываем позицию токена после покупки
-          setTimeout(async () => {
-            try {
-              await this.showTokenPosition(chatId, tokenAddress);
-            } catch (error) {
-              console.error('Ошибка открытия позиции после покупки:', error.message);
-            }
-          }, 2000); // Задержка 2 секунды для подтверждения транзакции
+            
+            const networkConfig = config.getNetworkConfig(this.userManager.getUserNetwork(chatId));
+            await this.bot.editMessageText(
+              `❌ Ошибка покупки:\n\n` +
+              `📍 Токен: \`${shortAddress}\`\n` +
+              `💰 Сумма: ${amount} ${networkConfig.nativeCurrency}\n\n` +
+              `${errorMessage}`,
+              {
+                chat_id: chatId,
+                message_id: callbackQuery.message.message_id,
+                parse_mode: 'Markdown'
+              }
+            );
+            
+            this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Ошибка покупки', show_alert: true });
+          }
         }
         
         // Обработка пользовательской суммы
@@ -1525,7 +1553,12 @@ class TelegramBotManager {
           { parse_mode: 'Markdown' }
         );
       } catch (error) {
-        this.bot.sendMessage(chatId, `❌ Ошибка zap-in: ${error.message.substring(0, 100)}...`);
+        let errorMessage = error.message || 'Неизвестная ошибка';
+        // Обрезаем сообщение если слишком длинное (Telegram лимит 4096 символов)
+        if (errorMessage.length > 4000) {
+          errorMessage = errorMessage.substring(0, 4000) + '...';
+        }
+        this.bot.sendMessage(chatId, `❌ Ошибка zap-in:\n\n${errorMessage}`);
       }
     });
   }

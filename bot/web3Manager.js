@@ -271,6 +271,44 @@ class Web3Manager {
       throw new Error('Сумма должна быть больше 0');
     }
 
+    // Проверяем, что токен добавлен и активен
+    let tokenInfo;
+    try {
+      tokenInfo = await this.retryCall(() => this.multiZapContract.getTokenInfo(tokenAddress));
+    } catch (error) {
+      if (error.message.includes('rate limit') || error.message.includes('missing revert data')) {
+        console.warn('Не удалось проверить токен заранее, продолжаем:', error.message);
+      } else {
+        throw new Error(`Ошибка получения информации о токене: ${error.message}`);
+      }
+    }
+
+    if (tokenInfo) {
+      if (tokenInfo.token === ethers.ZeroAddress) {
+        throw new Error('TOKEN_NOT_SUPPORTED: Токен не добавлен в контракт. Сначала добавьте токен через /addtoken');
+      }
+      if (!tokenInfo.isActive) {
+        throw new Error('TOKEN_INACTIVE: Токен неактивен. Обратитесь к администратору.');
+      }
+      console.log(`Токен проверен: ${tokenInfo.token}, LP: ${tokenInfo.lpToken}, Активен: ${tokenInfo.isActive}`);
+    }
+
+    // Проверяем баланс кошелька
+    try {
+      const walletBalance = await this.getWalletBalance();
+      const walletBalanceNum = parseFloat(walletBalance);
+      if (walletBalanceNum < amountEth) {
+        throw new Error(`Недостаточно средств. Баланс: ${walletBalance} ${this.networkConfig.nativeCurrency}, требуется: ${amountEth} ${this.networkConfig.nativeCurrency}`);
+      }
+      console.log(`Баланс кошелька: ${walletBalance} ${this.networkConfig.nativeCurrency}`);
+    } catch (error) {
+      if (!error.message.includes('Недостаточно средств')) {
+        console.warn('Не удалось проверить баланс заранее:', error.message);
+      } else {
+        throw error;
+      }
+    }
+
     try {
       const amountWei = ethers.parseEther(amountEth.toString());
       const gasParams = await this.getGasParams();
@@ -281,11 +319,17 @@ class Web3Manager {
       const amountTokenMin = 0n;
       const amountBNBMin = 0n;
 
-      console.log(`Slippage: 20%`);
-      console.log(`Amount Out Min Token: ${ethers.formatEther(amountOutMinToken)} BNB`);
-      console.log(`Amount Token Min: ${ethers.formatEther(amountTokenMin)} BNB`);
-      console.log(`Amount BNB Min: ${ethers.formatEther(amountBNBMin)} BNB`);
+      console.log(`Slippage: 0% (минимумы установлены в 0 для максимальной гибкости)`);
+      console.log(`Amount Out Min Token: ${ethers.formatEther(amountOutMinToken)} ${this.networkConfig.nativeCurrency}`);
+      console.log(`Amount Token Min: ${ethers.formatEther(amountTokenMin)} ${this.networkConfig.nativeCurrency}`);
+      console.log(`Amount ${this.networkConfig.nativeCurrency} Min: ${ethers.formatEther(amountBNBMin)} ${this.networkConfig.nativeCurrency}`);
+      console.log(`Сумма покупки: ${amountEth} ${this.networkConfig.nativeCurrency} (${amountWei.toString()} wei)`);
+      console.log(`Адрес контракта: ${await this.multiZapContract.getAddress()}`);
+      console.log(`Адрес кошелька: ${this.wallet.address}`);
+      console.log(`Адрес токена: ${tokenAddress}`);
 
+      // Отправляем транзакцию (ethers.js автоматически оценит газ)
+      console.log('Отправка транзакции...');
       const tx = await this.multiZapContract.zapIn(
         tokenAddress,
         amountOutMinToken,
@@ -296,10 +340,62 @@ class Web3Manager {
           ...gasParams
         }
       );
-      await tx.wait();
+      console.log(`Транзакция отправлена: ${tx.hash}`);
+      
+      const receipt = await tx.wait();
+      
+      // Проверяем статус транзакции
+      if (receipt.status === 0) {
+        throw new Error('Транзакция была отклонена контрактом. Возможные причины: токен не поддерживается, токен неактивен, недостаточно ликвидности в пуле.');
+      }
+      
       return tx.hash;
     } catch (error) {
-      throw new Error(`Ошибка zap-in: Транзакция отклонилась`);
+      // Улучшаем сообщение об ошибке
+      let errorMessage = error.message || 'Неизвестная ошибка';
+      
+      console.error('Детали ошибки zap-in:', {
+        message: error.message,
+        reason: error.reason,
+        code: error.code,
+        data: error.data,
+        error: error
+      });
+      
+      // Парсим ошибки из контракта
+      if (errorMessage.includes('TOKEN_NOT_SUPPORTED') || errorMessage.includes('token not supported')) {
+        errorMessage = 'Токен не добавлен в контракт. Сначала добавьте токен через /addtoken';
+      } else if (errorMessage.includes('TOKEN_INACTIVE') || errorMessage.includes('token inactive')) {
+        errorMessage = 'Токен неактивен. Обратитесь к администратору.';
+      } else if (errorMessage.includes('NO_BNB') || errorMessage.includes('NO_ETH') || errorMessage.includes('no bnb') || errorMessage.includes('no eth')) {
+        errorMessage = 'Недостаточно средств для покупки. Проверьте баланс кошелька.';
+      } else if (errorMessage.includes('NO_TOKENS_RECEIVED') || errorMessage.includes('no tokens received')) {
+        errorMessage = 'Не удалось получить токены после свопа. Возможно, недостаточно ликвидности в пуле или проблема с токеном.';
+      } else if (errorMessage.includes('insufficient funds') || errorMessage.includes('insufficient balance')) {
+        errorMessage = 'Недостаточно средств для оплаты газа и покупки. Проверьте баланс кошелька.';
+      } else if (errorMessage.includes('user rejected') || errorMessage.includes('user denied')) {
+        errorMessage = 'Транзакция отклонена пользователем.';
+      } else if (errorMessage.includes('replacement fee too low')) {
+        errorMessage = 'Комиссия за транзакцию слишком низкая. Попробуйте увеличить gas price.';
+      } else if (errorMessage.includes('nonce too low')) {
+        errorMessage = 'Ошибка nonce. Попробуйте еще раз через несколько секунд.';
+      } else if (errorMessage.includes('execution reverted')) {
+        // Пытаемся извлечь причину revert
+        const revertMatch = errorMessage.match(/execution reverted:?\s*(.+)/i);
+        if (revertMatch) {
+          errorMessage = `Транзакция отклонена контрактом: ${revertMatch[1]}`;
+        } else {
+          errorMessage = 'Транзакция отклонена контрактом. Возможные причины: токен не поддерживается, токен неактивен, недостаточно ликвидности в пуле.';
+        }
+      } else if (error.reason) {
+        // Если есть reason в ошибке, используем его
+        errorMessage = error.reason;
+      } else if (error.data && error.data.message) {
+        // Если есть data.message, используем его
+        errorMessage = error.data.message;
+      }
+      
+      throw new Error(`Ошибка zap-in: ${errorMessage}`);
     }
   }
 
@@ -619,10 +715,14 @@ class Web3Manager {
         };
       }
       
-      // Для сетей без EIP-1559 (например, BSC) используем gasPrice
-      const gasPrice = this.networkConfig.gasPrice 
-        ? ethers.parseUnits(this.networkConfig.gasPrice.toString(), 'gwei')
+      // Для сетей без EIP-1559 (например, BSC) используем gasPrice из конфига
+      const gasPriceConfig = this.networkConfig.gasPrice;
+      const gasPrice = gasPriceConfig 
+        ? ethers.parseUnits(gasPriceConfig.toString(), 'gwei')
         : feeData.gasPrice;
+      
+      console.log(`Gas price из конфига: ${gasPriceConfig} gwei`);
+      console.log(`Gas price в wei: ${gasPrice.toString()}`);
       
       return {
         gasPrice: gasPrice,
@@ -630,10 +730,12 @@ class Web3Manager {
       };
     } catch (error) {
       console.error('Ошибка получения газовых параметров:', error);
-      // Fallback значения
-      const gasPrice = this.networkConfig.gasPrice 
-        ? ethers.parseUnits(this.networkConfig.gasPrice.toString(), 'gwei')
-        : ethers.parseUnits('1', 'gwei');
+      // Fallback значения - используем значение из конфига
+      const gasPriceConfig = this.networkConfig.gasPrice || '0.05';
+      const gasPrice = ethers.parseUnits(gasPriceConfig.toString(), 'gwei');
+      
+      console.log(`Fallback gas price из конфига: ${gasPriceConfig} gwei`);
+      console.log(`Fallback gas price в wei: ${gasPrice.toString()}`);
       
       return {
         gasPrice: gasPrice,
