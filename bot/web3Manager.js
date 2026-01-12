@@ -462,7 +462,14 @@ class Web3Manager {
     }
 
     const storedLpToken = tokenInfo.lpToken;
+    const baseToken = tokenInfo.baseToken;
     console.log(`Сохраненный LP токен в контракте: ${storedLpToken}`);
+    console.log(`Base token (тип пары): ${baseToken}`);
+    
+    // Проверяем, что baseToken установлен (для старых токенов может быть address(0))
+    if (!baseToken || baseToken === ethers.ZeroAddress) {
+      throw new Error('BASE_TOKEN_NOT_SET: Токен был добавлен до обновления контракта. Пожалуйста, удалите токен и добавьте его заново через /addtoken с указанием типа пары (WBNB или USDT).');
+    }
 
     // Проверяем, что LP токен существует и правильный
     try {
@@ -594,11 +601,37 @@ class Web3Manager {
       if (receipt.status === 0) {
         // Транзакция была отклонена
         // Пытаемся понять причину
-        const lpBalance = await this.retryCall(() => this.multiZapContract.getLpBalance(tokenAddress)).catch(() => 0n);
-        if (lpBalance === 0n) {
-          throw new Error('NO_LP_BALANCE: У вас нет LP токенов для продажи. Баланс LP: 0');
+        let errorDetails = [];
+        
+        try {
+          const lpBalance = await this.retryCall(() => this.multiZapContract.getLpBalance(tokenAddress)).catch(() => 0n);
+          if (lpBalance === 0n) {
+            errorDetails.push('Нет LP токенов для продажи (баланс LP: 0)');
+          }
+        } catch (e) {
+          // Игнорируем ошибку проверки баланса
         }
-        throw new Error('Транзакция была отклонена контрактом. Возможные причины: нет LP токенов, недостаточно ликвидности, или токен неактивен.');
+        
+        try {
+          const tokenInfo = await this.retryCall(() => this.multiZapContract.getTokenInfo(tokenAddress)).catch(() => null);
+          if (tokenInfo && (!tokenInfo.baseToken || tokenInfo.baseToken === ethers.ZeroAddress)) {
+            errorDetails.push('Токен был добавлен до обновления контракта (baseToken не установлен). Удалите токен и добавьте заново через /addtoken');
+          }
+          if (tokenInfo && !tokenInfo.isActive) {
+            errorDetails.push('Токен неактивен');
+          }
+        } catch (e) {
+          // Игнорируем ошибку получения информации
+        }
+        
+        let errorMsg = 'Транзакция была отклонена контрактом.';
+        if (errorDetails.length > 0) {
+          errorMsg += '\n\nВозможные причины:\n• ' + errorDetails.join('\n• ');
+        } else {
+          errorMsg += '\n\nВозможные причины:\n• Нет LP токенов для продажи\n• Недостаточно ликвидности в пуле\n• Токен неактивен\n• Токен был добавлен до обновления контракта (baseToken не установлен)';
+        }
+        
+        throw new Error(errorMsg);
       }
       
       return tx.hash;

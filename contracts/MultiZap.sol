@@ -352,6 +352,10 @@ contract MultiZap is Ownable {
         address lpToken = tokenInfo.lpToken;
         address baseToken = tokenInfo.baseToken;
         address wbnb = router.WETH();
+        
+        // Проверяем, что baseToken установлен
+        require(baseToken != address(0), "BASE_TOKEN_NOT_SET");
+        
         uint lpBal = IERC20(lpToken).balanceOf(address(this));
         require(lpBal > 0, "NO_LP");
 
