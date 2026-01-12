@@ -374,6 +374,34 @@ class Web3Manager {
       console.log(`Адрес кошелька: ${this.wallet.address}`);
       console.log(`Адрес токена: ${tokenAddress}`);
 
+      // Проверяем баланс перед отправкой транзакции
+      const balance = await this.provider.getBalance(this.wallet.address);
+      const estimatedGas = gasParams.gasLimit 
+        ? (typeof gasParams.gasLimit === 'string' ? BigInt(gasParams.gasLimit) : BigInt(gasParams.gasLimit))
+        : BigInt(500000);
+      
+      let estimatedGasCost;
+      if (this.networkConfig.supportsEIP1559 && gasParams.maxFeePerGas) {
+        estimatedGasCost = estimatedGas * gasParams.maxFeePerGas;
+      } else if (gasParams.gasPrice) {
+        estimatedGasCost = estimatedGas * gasParams.gasPrice;
+      } else {
+        // Fallback оценка
+        estimatedGasCost = estimatedGas * ethers.parseUnits('50', 'gwei');
+      }
+      
+      const totalNeeded = amountWei + estimatedGasCost;
+      
+      if (balance < totalNeeded) {
+        const balanceEth = ethers.formatEther(balance);
+        const neededEth = ethers.formatEther(totalNeeded);
+        throw new Error(`Недостаточно средств для транзакции. Баланс: ${balanceEth} ${this.networkConfig.nativeCurrency}, требуется: ${neededEth} ${this.networkConfig.nativeCurrency} (включая газ)`);
+      }
+      
+      console.log(`Gas params:`, gasParams);
+      console.log(`Estimated gas cost: ${ethers.formatEther(estimatedGasCost)} ${this.networkConfig.nativeCurrency}`);
+      console.log(`Total needed: ${ethers.formatEther(totalNeeded)} ${this.networkConfig.nativeCurrency}`);
+      
       // Отправляем транзакцию (ethers.js автоматически оценит газ)
       console.log('Отправка транзакции...');
       const tx = await this.multiZapContract.zapIn(
