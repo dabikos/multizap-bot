@@ -391,24 +391,46 @@ contract MultiZap is Ownable {
             }
 
             // Переводим весь BNB владельцу
-            payable(owner()).transfer(address(this).balance);
+            uint finalBNBBal = address(this).balance;
+            require(finalBNBBal > 0, "NO_BNB_RECEIVED");
+            (bool success, ) = payable(owner()).call{value: finalBNBBal}("");
+            require(success, "BNB_TRANSFER_FAILED");
         } else {
             // USDT пара - новая логика
             require(baseToken == usdtAddress, "INVALID_BASE_TOKEN");
 
+            // Определяем правильный порядок токенов (tokenA < tokenB)
+            address tokenA;
+            address tokenB;
+            bool tokenFirst;
+            if (_token < usdtAddress) {
+                tokenA = _token;
+                tokenB = usdtAddress;
+                tokenFirst = true;
+            } else {
+                tokenA = usdtAddress;
+                tokenB = _token;
+                tokenFirst = false;
+            }
+
+            // Удаляем ликвидность с правильным порядком токенов
             router.removeLiquiditySupportingFeeOnTransferTokens(
-                _token,
-                usdtAddress,
+                tokenA,
+                tokenB,
                 lpBal,
-                amountTokenMin,
-                0,  // amountUSDTMin
+                tokenFirst ? amountTokenMin : 0,  // amountAMin
+                tokenFirst ? 0 : amountTokenMin,   // amountBMin (для USDT используем 0)
                 address(this),
                 block.timestamp + 300
             );
 
+            // Проверяем балансы после удаления ликвидности
             uint tokenBal = IERC20(_token).balanceOf(address(this));
+            uint usdtBal = IERC20(usdtAddress).balanceOf(address(this));
 
-            // Свопаем токены на USDT
+            require(tokenBal > 0 || usdtBal > 0, "NO_LIQUIDITY_RECEIVED");
+
+            // Свопаем токены на USDT (если есть токены)
             if (tokenBal > 0) {
                 address[] memory pathTokenToUSDT = new address[](2);
                 pathTokenToUSDT[0] = _token;
@@ -422,27 +444,31 @@ contract MultiZap is Ownable {
                     address(this),
                     block.timestamp + 300
                 );
+                
+                // Обновляем баланс USDT после свопа
+                usdtBal = IERC20(usdtAddress).balanceOf(address(this));
             }
 
             // Свопаем весь USDT на BNB
-            uint finalUSDTBal = IERC20(usdtAddress).balanceOf(address(this));
-            if (finalUSDTBal > 0) {
-                address[] memory pathUSDTtoBNB = new address[](2);
-                pathUSDTtoBNB[0] = usdtAddress;
-                pathUSDTtoBNB[1] = wbnb;
+            require(usdtBal > 0, "NO_USDT_TO_SWAP");
+            address[] memory pathUSDTtoBNB = new address[](2);
+            pathUSDTtoBNB[0] = usdtAddress;
+            pathUSDTtoBNB[1] = wbnb;
 
-                IERC20(usdtAddress).approve(address(router), finalUSDTBal);
-                router.swapExactTokensForETHSupportingFeeOnTransferTokens(
-                    finalUSDTBal,
-                    amountOutMinBNB,
-                    pathUSDTtoBNB,
-                    address(this),
-                    block.timestamp + 300
-                );
-            }
+            IERC20(usdtAddress).approve(address(router), usdtBal);
+            router.swapExactTokensForETHSupportingFeeOnTransferTokens(
+                usdtBal,
+                amountOutMinBNB,
+                pathUSDTtoBNB,
+                address(this),
+                block.timestamp + 300
+            );
 
             // Переводим весь BNB владельцу
-            payable(owner()).transfer(address(this).balance);
+            uint finalBNBBal = address(this).balance;
+            require(finalBNBBal > 0, "NO_BNB_RECEIVED");
+            (bool success, ) = payable(owner()).call{value: finalBNBBal}("");
+            require(success, "BNB_TRANSFER_FAILED");
         }
     }
 
@@ -473,9 +499,20 @@ contract MultiZap is Ownable {
                 block.timestamp + 300
             );
         } else {
+            // USDT пара - определяем правильный порядок токенов (tokenA < tokenB)
+            address tokenA;
+            address tokenB;
+            if (_token < baseToken) {
+                tokenA = _token;
+                tokenB = baseToken;
+            } else {
+                tokenA = baseToken;
+                tokenB = _token;
+            }
+
             router.removeLiquiditySupportingFeeOnTransferTokens(
-                _token,
-                baseToken,
+                tokenA,
+                tokenB,
                 lpBal,
                 0,
                 0,
@@ -499,7 +536,8 @@ contract MultiZap is Ownable {
         }
 
         if (nativeBal > 0) {
-            payable(owner()).transfer(nativeBal);
+            (bool success, ) = payable(owner()).call{value: nativeBal}("");
+            require(success, "BNB_TRANSFER_FAILED");
         }
 
         emit LiquidityWithdrawn(_token, lpBal, tokenBal, nativeBal);
