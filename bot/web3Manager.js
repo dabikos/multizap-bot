@@ -126,16 +126,42 @@ class Web3Manager {
       console.log('Wallet Address:', this.wallet.address);
 
       const gasParams = await this.getGasParams();
-      console.log('Gas params:', gasParams);
+      console.log('Gas params (raw):', gasParams);
 
-      // Увеличиваем gasLimit для деплоя (контракт большой из-за viaIR)
+      // Для Ethereum хотим жестко ограничить стоимость газа (дешевле деплой)
+      // Устанавливаем очень низкие значения: 0.1 gwei maxFeePerGas и 0.05 gwei maxPriorityFeePerGas
       const deployOptions = { ...gasParams };
-      const baseGasLimit = deployOptions.gasLimit 
-        ? (typeof deployOptions.gasLimit === 'string' ? BigInt(deployOptions.gasLimit) : deployOptions.gasLimit)
-        : BigInt(2000000);
+      if (this.currentNetwork === 'ETH') {
+        // Используем очень низкие значения для экономии
+        const maxFee = ethers.parseUnits('0.1', 'gwei');
+        const maxPriority = ethers.parseUnits('0.05', 'gwei');
+        deployOptions.maxFeePerGas = maxFee;
+        deployOptions.maxPriorityFeePerGas = maxPriority;
+        // Убираем gasPrice, чтобы не мешал EIP-1559
+        if (deployOptions.gasPrice) {
+          delete deployOptions.gasPrice;
+        }
+        console.log('Override gas for ETH deploy (low cost):', {
+          maxFeePerGas: `${ethers.formatUnits(maxFee, 'gwei')} gwei`,
+          maxPriorityFeePerGas: `${ethers.formatUnits(maxPriority, 'gwei')} gwei`
+        });
+      }
+
+      // Для Ethereum используем меньший gasLimit для экономии
+      // Для других сетей увеличиваем gasLimit для деплоя (контракт большой из-за viaIR)
+      let baseGasLimit;
+      if (this.currentNetwork === 'ETH') {
+        // Для Ethereum используем минимально необходимый gasLimit (контракт использует ~2.9M)
+        baseGasLimit = BigInt(3000000); // Немного больше реального использования (2.9M)
+      } else {
+        baseGasLimit = deployOptions.gasLimit 
+          ? (typeof deployOptions.gasLimit === 'string' ? BigInt(deployOptions.gasLimit) : deployOptions.gasLimit)
+          : BigInt(2000000);
+        // Увеличиваем gasLimit в 2 раза для деплоя (для других сетей)
+        baseGasLimit = baseGasLimit * 2n;
+      }
       
-      // Увеличиваем gasLimit в 2 раза для деплоя
-      deployOptions.gasLimit = baseGasLimit * 2n;
+      deployOptions.gasLimit = baseGasLimit;
       console.log(`Gas limit для деплоя: ${deployOptions.gasLimit.toString()}`);
 
       // Проверяем адреса перед деплоем
