@@ -436,6 +436,48 @@ class Web3Manager {
         error: error
       });
       
+      // Обработка специфических ошибок отправки транзакции
+      if (error.code === 'UNKNOWN_ERROR' || error.message?.includes('failed to send tx') || error.message?.includes('could not coalesce')) {
+        // Проверяем баланс и параметры газа
+        try {
+          const balance = await this.provider.getBalance(this.wallet.address);
+          const balanceEth = ethers.formatEther(balance);
+          
+          // Получаем текущие параметры газа
+          const gasParams = await this.getGasParams();
+          console.error('Gas params при ошибке:', gasParams);
+          
+          if (this.networkConfig.supportsEIP1559) {
+            if (!gasParams.maxFeePerGas || !gasParams.maxPriorityFeePerGas) {
+              errorMessage = `Ошибка отправки транзакции: параметры газа для EIP-1559 не установлены. Попробуйте позже или проверьте RPC провайдер.`;
+            } else {
+              const maxFeeGwei = ethers.formatUnits(gasParams.maxFeePerGas, 'gwei');
+              const priorityFeeGwei = ethers.formatUnits(gasParams.maxPriorityFeePerGas, 'gwei');
+              
+              errorMessage = `Ошибка отправки транзакции. Возможные причины:\n` +
+                `• Недостаточно средств для оплаты газа (баланс: ${balanceEth} ${this.networkConfig.nativeCurrency})\n` +
+                `• Слишком низкий maxFeePerGas (${maxFeeGwei} gwei) - попробуйте позже\n` +
+                `• Проблемы с RPC провайдером\n` +
+                `• Попробуйте увеличить сумму покупки или подождите`;
+            }
+          } else {
+            if (!gasParams.gasPrice) {
+              errorMessage = `Ошибка отправки транзакции: gasPrice не установлен. Попробуйте позже или проверьте RPC провайдер.`;
+            } else {
+              const gasPriceGwei = ethers.formatUnits(gasParams.gasPrice, 'gwei');
+              
+              errorMessage = `Ошибка отправки транзакции. Возможные причины:\n` +
+                `• Недостаточно средств для оплаты газа (баланс: ${balanceEth} ${this.networkConfig.nativeCurrency})\n` +
+                `• Слишком низкий gasPrice (${gasPriceGwei} gwei) - попробуйте позже\n` +
+                `• Проблемы с RPC провайдером\n` +
+                `• Попробуйте увеличить сумму покупки или подождите`;
+            }
+          }
+        } catch (balanceError) {
+          errorMessage = `Ошибка отправки транзакции: ${error.message}. Не удалось проверить баланс: ${balanceError.message}`;
+        }
+      }
+      
       // Парсим ошибки из контракта
       if (errorMessage.includes('TOKEN_NOT_SUPPORTED') || errorMessage.includes('token not supported')) {
         errorMessage = 'Токен не добавлен в контракт. Сначала добавьте токен через /addtoken';
@@ -996,9 +1038,10 @@ class Web3Manager {
       if (this.networkConfig.supportsEIP1559) {
         // Для Ethereum и Base используем динамические значения из сети
         if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
-          // Увеличиваем maxFeePerGas на 20% для надежности
-          const maxFeePerGas = feeData.maxFeePerGas + (feeData.maxFeePerGas / 5n);
-          const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+          // Увеличиваем maxFeePerGas на 50% для надежности (Ethereum может быть очень загружен)
+          const maxFeePerGas = feeData.maxFeePerGas + (feeData.maxFeePerGas / 2n);
+          // Увеличиваем maxPriorityFeePerGas на 30% для более быстрого включения в блок
+          const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas + (feeData.maxPriorityFeePerGas * 3n / 10n);
           
           return {
             maxFeePerGas: maxFeePerGas,
