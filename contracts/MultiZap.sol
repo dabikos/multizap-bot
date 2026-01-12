@@ -356,12 +356,23 @@ contract MultiZap is Ownable {
         require(supportedTokens[_token].token != address(0), "TOKEN_NOT_SUPPORTED");
         
         TokenInfo memory tokenInfo = supportedTokens[_token];
-        address lpToken = tokenInfo.lpToken;
         address baseToken = tokenInfo.baseToken;
         address wbnb = router.WETH();
         
         // Проверяем, что baseToken установлен
         require(baseToken != address(0), "BASE_TOKEN_NOT_SET");
+        
+        // Определяем правильный LP токен из Factory (на случай если сохраненный неправильный)
+        address expectedLpToken;
+        if (_token < baseToken) {
+            expectedLpToken = factory.getPair(_token, baseToken);
+        } else {
+            expectedLpToken = factory.getPair(baseToken, _token);
+        }
+        require(expectedLpToken != address(0), "LP_PAIR_NOT_FOUND");
+        
+        // Используем правильный LP токен (из Factory, а не сохраненный)
+        address lpToken = expectedLpToken;
         
         uint lpBal = IERC20(lpToken).balanceOf(address(this));
         require(lpBal > 0, "NO_LP");
@@ -430,15 +441,7 @@ contract MultiZap is Ownable {
                 amountBMin = amountTokenMin;  // Для токена
             }
 
-            // Проверяем, что LP токен соответствует ожидаемому порядку токенов
-            // В PancakeSwap LP токен определяется как getPair(tokenA, tokenB) где tokenA < tokenB
-            address expectedLpToken;
-            if (tokenA < tokenB) {
-                expectedLpToken = factory.getPair(tokenA, tokenB);
-            } else {
-                expectedLpToken = factory.getPair(tokenB, tokenA);
-            }
-            require(expectedLpToken == lpToken, "LP_TOKEN_MISMATCH");
+            // LP токен уже проверен и установлен выше, используем его
 
             // Удаляем ликвидность с правильным порядком токенов
             router.removeLiquiditySupportingFeeOnTransferTokens(
