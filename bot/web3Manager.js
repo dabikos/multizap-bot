@@ -108,22 +108,38 @@ class Web3Manager {
       throw new Error('ROUTER_ADDRESS не определен в конфигурации сети');
     }
 
+    if (!this.networkConfig.factoryAddress) {
+      throw new Error('FACTORY_ADDRESS не определен в конфигурации сети');
+    }
+
+    if (!this.networkConfig.usdtAddress) {
+      throw new Error('USDT_ADDRESS не определен в конфигурации сети');
+    }
+
     try {
       console.log(`Развертывание контракта в сети ${this.currentNetwork}:`);
       console.log('ABI:', this.abi ? 'загружен' : 'не загружен');
       console.log('Bytecode:', this.bytecode ? 'загружен' : 'не загружен');
       console.log('Router Address:', this.networkConfig.routerAddress);
       console.log('Factory Address:', this.networkConfig.factoryAddress);
+      console.log('USDT Address:', this.networkConfig.usdtAddress);
       console.log('Wallet Address:', this.wallet.address);
 
       const gasParams = await this.getGasParams();
       console.log('Gas params:', gasParams);
 
+      // Преобразуем gasLimit в число, если это строка
+      const deployOptions = { ...gasParams };
+      if (deployOptions.gasLimit && typeof deployOptions.gasLimit === 'string') {
+        deployOptions.gasLimit = BigInt(deployOptions.gasLimit);
+      }
+
       const MultiZapFactory = new ethers.ContractFactory(this.abi, this.bytecode, this.wallet);
       const multiZap = await MultiZapFactory.deploy(
         ethers.getAddress(this.networkConfig.routerAddress),
         ethers.getAddress(this.networkConfig.factoryAddress),
-        gasParams
+        ethers.getAddress(this.networkConfig.usdtAddress),
+        deployOptions  // Опции передаются как 4-й аргумент
       );
       await multiZap.waitForDeployment();
       const address = await multiZap.getAddress();
