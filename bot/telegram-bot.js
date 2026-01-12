@@ -1002,8 +1002,14 @@ class TelegramBotManager {
         else if (data.startsWith('sell_percent_')) {
           const parts = data.replace('sell_percent_', '').split('_');
           const tokenAddress = parts[0];
-          const percent = parseInt(parts[1]);
+          const percent = parseInt(parts[1], 10); // Явно указываем основание 10
           const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+          
+          // Проверяем, что percent - валидное число
+          if (isNaN(percent) || percent < 0 || percent > 100) {
+            await this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Неверный процент', show_alert: true });
+            return;
+          }
           
           const web3Manager = this.getWeb3ManagerForUser(chatId);
           web3Manager.setPrivateKey(user.privateKey);

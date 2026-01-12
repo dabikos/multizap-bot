@@ -671,7 +671,10 @@ class Web3Manager {
       throw new Error('Неверный адрес токена');
     }
 
-    if (![5, 25, 50, 75].includes(percent)) {
+    // Убеждаемся, что percent - это целое число
+    const percentInt = typeof percent === 'string' ? parseInt(percent, 10) : Math.floor(Number(percent));
+    
+    if (![5, 25, 50, 75].includes(percentInt)) {
       throw new Error('Неверный процент. Доступные значения: 5, 25, 50, 75');
     }
 
@@ -707,7 +710,8 @@ class Web3Manager {
     }
 
     // Вычисляем количество LP токенов для продажи
-    const lpToSell = (lpBalance * BigInt(percent)) / 100n;
+    // Используем percentInt для вычислений
+    const lpToSell = (lpBalance * BigInt(percentInt)) / 100n;
     if (lpToSell === 0n) {
       throw new Error('Недостаточно LP токенов для продажи выбранного процента');
     }
@@ -724,7 +728,7 @@ class Web3Manager {
     try {
       const tx = await this.multiZapContract.exitAndSellPartial(
         tokenAddress,
-        percent,
+        percentInt, // Используем percentInt вместо percent
         0, // amountTokenMin - 0 для максимальной гибкости
         0, // amountBNBMin - 0 для максимальной гибкости
         0, // amountOutMinBNB - 0 для максимальной гибкости
