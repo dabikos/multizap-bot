@@ -729,8 +729,17 @@ class Web3Manager {
     }
 
     // Вычисляем количество LP токенов для продажи
-    // Используем percentInt для вычислений
-    const lpToSell = (lpBalance * BigInt(percentInt)) / 100n;
+    // Убеждаемся, что percentInt - это целое число перед конвертацией в BigInt
+    const percentForCalculation = Number.isInteger(percentInt) ? percentInt : Math.floor(Number(percentInt));
+    
+    if (!Number.isInteger(percentForCalculation) || percentForCalculation < 1 || percentForCalculation > 100) {
+      throw new Error(`Неверный процент для вычислений: ${percentForCalculation} (исходный: ${percent}, тип: ${typeof percent})`);
+    }
+    
+    console.log(`Вычисление lpToSell: lpBalance=${lpBalance}, percentForCalculation=${percentForCalculation} (тип: ${typeof percentForCalculation})`);
+    
+    // Используем percentForCalculation для вычислений
+    const lpToSell = (lpBalance * BigInt(percentForCalculation)) / 100n;
     if (lpToSell === 0n) {
       throw new Error('Недостаточно LP токенов для продажи выбранного процента');
     }
