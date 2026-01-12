@@ -51,6 +51,16 @@ interface IUniswapV2Router {
         uint deadline
     ) external returns (uint amountA, uint amountB, uint liquidity);
 
+    function removeLiquidity(
+        address tokenA,
+        address tokenB,
+        uint liquidity,
+        uint amountAMin,
+        uint amountBMin,
+        address to,
+        uint deadline
+    ) external returns (uint amountA, uint amountB);
+
     function removeLiquidityETHSupportingFeeOnTransferTokens(
         address token,
         uint liquidity,
@@ -460,7 +470,9 @@ contract MultiZap is Ownable {
             // LP токен уже проверен и установлен выше, используем его
 
             // Удаляем ликвидность с правильным порядком токенов
-            router.removeLiquiditySupportingFeeOnTransferTokens(
+            // Для USDT пар используем обычный removeLiquidity, так как USDT не имеет fee-on-transfer
+            // Это более надежно и работает быстрее
+            router.removeLiquidity(
                 tokenA,
                 tokenB,
                 lpBal,
