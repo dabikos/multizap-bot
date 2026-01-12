@@ -128,17 +128,31 @@ class Web3Manager {
       const gasParams = await this.getGasParams();
       console.log('Gas params:', gasParams);
 
-      // Преобразуем gasLimit в число, если это строка
+      // Увеличиваем gasLimit для деплоя (контракт большой из-за viaIR)
       const deployOptions = { ...gasParams };
-      if (deployOptions.gasLimit && typeof deployOptions.gasLimit === 'string') {
-        deployOptions.gasLimit = BigInt(deployOptions.gasLimit);
-      }
+      const baseGasLimit = deployOptions.gasLimit 
+        ? (typeof deployOptions.gasLimit === 'string' ? BigInt(deployOptions.gasLimit) : deployOptions.gasLimit)
+        : BigInt(2000000);
+      
+      // Увеличиваем gasLimit в 2 раза для деплоя
+      deployOptions.gasLimit = baseGasLimit * 2n;
+      console.log(`Gas limit для деплоя: ${deployOptions.gasLimit.toString()}`);
+
+      // Проверяем адреса перед деплоем
+      const routerAddr = ethers.getAddress(this.networkConfig.routerAddress);
+      const factoryAddr = ethers.getAddress(this.networkConfig.factoryAddress);
+      const usdtAddr = ethers.getAddress(this.networkConfig.usdtAddress);
+      
+      console.log('Проверка адресов:');
+      console.log('  Router:', routerAddr);
+      console.log('  Factory:', factoryAddr);
+      console.log('  USDT:', usdtAddr);
 
       const MultiZapFactory = new ethers.ContractFactory(this.abi, this.bytecode, this.wallet);
       const multiZap = await MultiZapFactory.deploy(
-        ethers.getAddress(this.networkConfig.routerAddress),
-        ethers.getAddress(this.networkConfig.factoryAddress),
-        ethers.getAddress(this.networkConfig.usdtAddress),
+        routerAddr,
+        factoryAddr,
+        usdtAddr,
         deployOptions  // Опции передаются как 4-й аргумент
       );
       await multiZap.waitForDeployment();
