@@ -265,7 +265,7 @@ contract MultiZap is Ownable {
             require(tokenBal > 0, "NO_TOKENS_RECEIVED");
 
             // Даем разрешение роутеру на использование токенов
-            IERC20(_token).approve(address(router), tokenBal);
+            IERC20(_token).forceApprove(address(router), tokenBal);
 
             // Добавляем ликвидность
             router.addLiquidityETH{value: otherHalf}(
@@ -303,7 +303,7 @@ contract MultiZap is Ownable {
             pathUSDTtoToken[0] = usdtAddress;
             pathUSDTtoToken[1] = _token;
 
-            IERC20(usdtAddress).approve(address(router), halfUSDT);
+            IERC20(usdtAddress).forceApprove(address(router), halfUSDT);
             router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
                 halfUSDT,
                 amountOutMinToken,
@@ -316,8 +316,8 @@ contract MultiZap is Ownable {
             require(tokenBal > 0, "NO_TOKENS_RECEIVED");
 
             // Добавляем ликвидность Token/USDT
-            IERC20(_token).approve(address(router), tokenBal);
-            IERC20(usdtAddress).approve(address(router), otherHalfUSDT);
+            IERC20(_token).forceApprove(address(router), tokenBal);
+            IERC20(usdtAddress).forceApprove(address(router), otherHalfUSDT);
 
             router.addLiquidity(
                 _token,
@@ -360,7 +360,10 @@ contract MultiZap is Ownable {
         require(lpBal > 0, "NO_LP");
 
         // Даем разрешение роутеру на использование LP токенов
-        IERC20(lpToken).approve(address(router), lpBal);
+        // Сначала сбрасываем approve (на случай если был предыдущий)
+        // Затем устанавливаем новый approve
+        // Используем forceApprove из SafeERC20 для совместимости со всеми токенами
+        IERC20(lpToken).forceApprove(address(router), lpBal);
 
         if (baseToken == wbnb) {
             // WBNB пара - существующая логика
@@ -382,7 +385,7 @@ contract MultiZap is Ownable {
                 path[1] = wbnb;
 
                 // Даем разрешение роутеру на использование токенов
-                IERC20(_token).approve(address(router), tokenBal);
+                IERC20(_token).forceApprove(address(router), tokenBal);
 
                 // Свопаем токены на BNB
                 router.swapExactTokensForETHSupportingFeeOnTransferTokens(
@@ -406,15 +409,18 @@ contract MultiZap is Ownable {
             // Определяем правильный порядок токенов (tokenA < tokenB)
             address tokenA;
             address tokenB;
-            bool tokenFirst;
+            uint amountAMin;
+            uint amountBMin;
             if (_token < usdtAddress) {
                 tokenA = _token;
                 tokenB = usdtAddress;
-                tokenFirst = true;
+                amountAMin = amountTokenMin;  // Для токена
+                amountBMin = 0;               // Для USDT (0 для гибкости)
             } else {
                 tokenA = usdtAddress;
                 tokenB = _token;
-                tokenFirst = false;
+                amountAMin = 0;               // Для USDT (0 для гибкости)
+                amountBMin = amountTokenMin;  // Для токена
             }
 
             // Удаляем ликвидность с правильным порядком токенов
@@ -422,8 +428,8 @@ contract MultiZap is Ownable {
                 tokenA,
                 tokenB,
                 lpBal,
-                tokenFirst ? amountTokenMin : 0,  // amountAMin
-                tokenFirst ? 0 : amountTokenMin,   // amountBMin (для USDT используем 0)
+                amountAMin,
+                amountBMin,
                 address(this),
                 block.timestamp + 300
             );
@@ -440,7 +446,7 @@ contract MultiZap is Ownable {
                 pathTokenToUSDT[0] = _token;
                 pathTokenToUSDT[1] = usdtAddress;
 
-                IERC20(_token).approve(address(router), tokenBal);
+                IERC20(_token).forceApprove(address(router), tokenBal);
                 router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
                     tokenBal,
                     0,
@@ -459,7 +465,7 @@ contract MultiZap is Ownable {
             pathUSDTtoBNB[0] = usdtAddress;
             pathUSDTtoBNB[1] = wbnb;
 
-            IERC20(usdtAddress).approve(address(router), usdtBal);
+            IERC20(usdtAddress).forceApprove(address(router), usdtBal);
             router.swapExactTokensForETHSupportingFeeOnTransferTokens(
                 usdtBal,
                 amountOutMinBNB,
@@ -491,7 +497,7 @@ contract MultiZap is Ownable {
         uint lpBal = IERC20(lpToken).balanceOf(address(this));
         require(lpBal > 0, "NO_LP");
 
-        IERC20(lpToken).approve(address(router), lpBal);
+        IERC20(lpToken).forceApprove(address(router), lpBal);
 
         if (baseToken == wbnb) {
             router.removeLiquidityETHSupportingFeeOnTransferTokens(
