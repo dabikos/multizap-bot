@@ -362,7 +362,9 @@ contract MultiZap is Ownable {
         // Проверяем, что baseToken установлен
         require(baseToken != address(0), "BASE_TOKEN_NOT_SET");
         
-        // Определяем правильный LP токен из Factory (на случай если сохраненный неправильный)
+        // Определяем правильный LP токен из Factory используя сохраненный baseToken
+        // Это важно, так как токен может иметь обе пары (USDT и WBNB)
+        // Мы должны использовать ту пару, которая была указана при добавлении токена
         address expectedLpToken;
         if (_token < baseToken) {
             expectedLpToken = factory.getPair(_token, baseToken);
@@ -371,8 +373,22 @@ contract MultiZap is Ownable {
         }
         require(expectedLpToken != address(0), "LP_PAIR_NOT_FOUND");
         
-        // Используем правильный LP токен (из Factory, а не сохраненный)
+        // Используем правильный LP токен из Factory (с правильным baseToken)
         address lpToken = expectedLpToken;
+        
+        // Дополнительная проверка: убеждаемся, что LP токен соответствует сохраненному baseToken
+        // Если сохраненный LP токен существует и имеет баланс, но не совпадает с ожидаемым,
+        // это может означать, что токен был добавлен с неправильным baseToken
+        address storedLpToken = tokenInfo.lpToken;
+        if (storedLpToken != address(0) && storedLpToken != expectedLpToken) {
+            // Проверяем баланс сохраненного LP токена
+            uint storedLpBal = IERC20(storedLpToken).balanceOf(address(this));
+            if (storedLpBal > 0) {
+                // Если в сохраненном LP токене есть баланс, используем его
+                // Это может быть случай, когда токен был добавлен вручную с правильным LP адресом
+                lpToken = storedLpToken;
+            }
+        }
         
         uint lpBal = IERC20(lpToken).balanceOf(address(this));
         require(lpBal > 0, "NO_LP");
