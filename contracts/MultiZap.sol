@@ -160,7 +160,14 @@ contract MultiZap is Ownable {
         address baseToken = _useUSDT ? usdtAddress : router.WETH();
         require(baseToken != address(0), "BASE_TOKEN_NOT_SET");
         
-        address lpToken = factory.getPair(_token, baseToken);
+        // В PancakeSwap порядок токенов важен: getPair работает только если tokenA < tokenB
+        // Проверяем оба варианта порядка
+        address lpToken;
+        if (_token < baseToken) {
+            lpToken = factory.getPair(_token, baseToken);
+        } else {
+            lpToken = factory.getPair(baseToken, _token);
+        }
         require(lpToken != address(0), "LP_PAIR_NOT_FOUND");
 
         supportedTokens[_token] = TokenInfo({
@@ -423,6 +430,16 @@ contract MultiZap is Ownable {
                 amountBMin = amountTokenMin;  // Для токена
             }
 
+            // Проверяем, что LP токен соответствует ожидаемому порядку токенов
+            // В PancakeSwap LP токен определяется как getPair(tokenA, tokenB) где tokenA < tokenB
+            address expectedLpToken;
+            if (tokenA < tokenB) {
+                expectedLpToken = factory.getPair(tokenA, tokenB);
+            } else {
+                expectedLpToken = factory.getPair(tokenB, tokenA);
+            }
+            require(expectedLpToken == lpToken, "LP_TOKEN_MISMATCH");
+
             // Удаляем ликвидность с правильным порядком токенов
             router.removeLiquiditySupportingFeeOnTransferTokens(
                 tokenA,
@@ -435,10 +452,15 @@ contract MultiZap is Ownable {
             );
 
             // Проверяем балансы после удаления ликвидности
+            // Важно: проверяем балансы сразу после removeLiquidity
             uint tokenBal = IERC20(_token).balanceOf(address(this));
             uint usdtBal = IERC20(usdtAddress).balanceOf(address(this));
 
-            require(tokenBal > 0 || usdtBal > 0, "NO_LIQUIDITY_RECEIVED");
+            // Если оба баланса равны 0, значит removeLiquidity не сработал
+            // Это может быть из-за неправильного LP токена или недостаточной ликвидности
+            if (tokenBal == 0 && usdtBal == 0) {
+                revert("NO_LIQUIDITY_RECEIVED_AFTER_REMOVE");
+            }
 
             // Свопаем токены на USDT (если есть токены)
             if (tokenBal > 0) {
