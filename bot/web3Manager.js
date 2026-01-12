@@ -671,11 +671,24 @@ class Web3Manager {
       throw new Error('Неверный адрес токена');
     }
 
+    // ВАЖНО: Проверяем, что percent не является дробным числом (например, 0.05 вместо 5)
+    // Если percent меньше 1, это может быть ошибка (например, 0.05 вместо 5)
+    if (typeof percent === 'number' && percent < 1 && percent > 0) {
+      throw new Error(`Похоже, что передан дробный процент (${percent}) вместо целого числа. Используйте целые числа: 5, 25, 50, 75`);
+    }
+
     // Убеждаемся, что percent - это целое число
     let percentInt;
     if (typeof percent === 'string') {
       percentInt = parseInt(percent, 10);
+      if (isNaN(percentInt)) {
+        throw new Error(`Неверный формат процента (строка): "${percent}"`);
+      }
     } else if (typeof percent === 'number') {
+      // Проверяем, что это целое число, а не дробное
+      if (!Number.isInteger(percent)) {
+        throw new Error(`Процент должен быть целым числом, получено: ${percent}`);
+      }
       percentInt = Math.floor(percent);
     } else {
       // Если это BigInt или другой тип, конвертируем в число
@@ -683,19 +696,22 @@ class Web3Manager {
       if (isNaN(percentInt)) {
         throw new Error(`Неверный формат процента: ${percent} (тип: ${typeof percent})`);
       }
+      if (!Number.isInteger(percentInt)) {
+        throw new Error(`Процент должен быть целым числом, получено: ${percentInt}`);
+      }
       percentInt = Math.floor(percentInt);
     }
     
     // Проверяем, что percentInt - это целое число от 1 до 100
-    if (isNaN(percentInt) || percentInt < 1 || percentInt > 100) {
-      throw new Error(`Неверный процент: ${percentInt}. Доступные значения: 5, 25, 50, 75`);
+    if (isNaN(percentInt) || !Number.isInteger(percentInt) || percentInt < 1 || percentInt > 100) {
+      throw new Error(`Неверный процент: ${percentInt} (исходный: ${percent}, тип: ${typeof percent}). Доступные значения: 5, 25, 50, 75`);
     }
     
     if (![5, 25, 50, 75].includes(percentInt)) {
-      throw new Error(`Неверный процент: ${percentInt}. Доступные значения: 5, 25, 50, 75`);
+      throw new Error(`Неверный процент: ${percentInt} (исходный: ${percent}). Доступные значения: 5, 25, 50, 75`);
     }
     
-    console.log(`exitAndSellPartial: percent=${percent}, percentInt=${percentInt}, type=${typeof percentInt}`);
+    console.log(`exitAndSellPartial: percent=${percent} (тип: ${typeof percent}), percentInt=${percentInt} (тип: ${typeof percentInt}, isInteger: ${Number.isInteger(percentInt)})`);
 
     // Получаем информацию о токене из контракта
     let tokenInfo;
