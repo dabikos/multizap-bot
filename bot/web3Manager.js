@@ -256,7 +256,12 @@ class Web3Manager {
     try {
       const gasParams = await this.getGasParams();
       const tx = await this.multiZapContract.addTokenAuto(tokenAddress, useUSDT, gasParams);
-      await tx.wait();
+      
+      // Для Ethereum и Base используем более быструю проверку (1 подтверждение)
+      // Для BSC можно использовать больше подтверждений
+      const confirmations = this.networkConfig.supportsEIP1559 ? 1 : 1;
+      await tx.wait(confirmations);
+      
       return tx.hash;
     } catch (error) {
       throw new Error(`Ошибка автоматического добавления токена: ${error.message}`);
@@ -761,23 +766,21 @@ class Web3Manager {
     }
 
     // Подготавливаем параметры газа
-    const gasPrice = this.networkConfig.gasPrice;
-    let gasPriceWei;
-    if (typeof gasPrice === 'string') {
-      // Если это строка типа "0.05", нужно конвертировать в wei
-      if (gasPrice.includes('.')) {
-        gasPriceWei = ethers.parseUnits(gasPrice, 'gwei');
-      } else {
-        gasPriceWei = BigInt(gasPrice);
-      }
-    } else {
-      gasPriceWei = BigInt(gasPrice);
-    }
+    // Используем getGasParams() для правильной обработки EIP-1559 (Ethereum, Base)
+    // Это важно, так как для Ethereum и Base gasPrice может быть null
+    const gasParams = await this.getGasParams();
     
-    const gasParams = {
-      gasLimit: 500000n,
-      gasPrice: gasPriceWei
-    };
+    // Увеличиваем gasLimit для частичной продажи
+    const baseGasLimit = gasParams.gasLimit 
+      ? (typeof gasParams.gasLimit === 'string' ? BigInt(gasParams.gasLimit) : BigInt(gasParams.gasLimit))
+      : BigInt(500000);
+    
+    // Обновляем gasLimit в gasParams
+    if (this.networkConfig.supportsEIP1559) {
+      gasParams.gasLimit = baseGasLimit;
+    } else {
+      gasParams.gasLimit = baseGasLimit;
+    }
 
     try {
       // Убеждаемся, что percentInt - это целое число (не дробное)
@@ -811,7 +814,10 @@ class Web3Manager {
       );
       
       // Ждем подтверждения транзакции
-      const receipt = await tx.wait();
+      // Для Ethereum и Base используем 1 подтверждение для ускорения
+      // Для BSC можно использовать больше подтверждений
+      const confirmations = this.networkConfig.supportsEIP1559 ? 1 : 1;
+      const receipt = await tx.wait(confirmations);
       
       // Проверяем статус транзакции
       if (receipt.status === 0) {
@@ -959,21 +965,47 @@ class Web3Manager {
       const feeData = await this.provider.getFeeData();
       
       // Если сеть поддерживает EIP-1559, используем maxFeePerGas и maxPriorityFeePerGas
-      if (this.networkConfig.supportsEIP1559 && feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
-        return {
-          maxFeePerGas: feeData.maxFeePerGas,
-          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
-          gasLimit: this.networkConfig.gasLimit || '2000000'
-        };
+      if (this.networkConfig.supportsEIP1559) {
+        // Для Ethereum и Base используем динамические значения из сети
+        if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+          // Увеличиваем maxFeePerGas на 20% для надежности
+          const maxFeePerGas = feeData.maxFeePerGas + (feeData.maxFeePerGas / 5n);
+          const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+          
+          return {
+            maxFeePerGas: maxFeePerGas,
+            maxPriorityFeePerGas: maxPriorityFeePerGas,
+            gasLimit: this.networkConfig.gasLimit || '2000000'
+          };
+        } else {
+          // Fallback для EIP-1559 сетей, если не получили данные
+          // Используем разумные значения по умолчанию
+          const defaultMaxFeePerGas = ethers.parseUnits('50', 'gwei'); // 50 gwei
+          const defaultMaxPriorityFeePerGas = ethers.parseUnits('2', 'gwei'); // 2 gwei
+          
+          console.warn('⚠️ Не удалось получить feeData для EIP-1559, используем значения по умолчанию');
+          return {
+            maxFeePerGas: defaultMaxFeePerGas,
+            maxPriorityFeePerGas: defaultMaxPriorityFeePerGas,
+            gasLimit: this.networkConfig.gasLimit || '2000000'
+          };
+        }
       }
       
       // Для сетей без EIP-1559 (например, BSC) используем gasPrice из конфига
       const gasPriceConfig = this.networkConfig.gasPrice;
-      const gasPrice = gasPriceConfig 
-        ? ethers.parseUnits(gasPriceConfig.toString(), 'gwei')
-        : feeData.gasPrice;
+      let gasPrice;
       
-      console.log(`Gas price из конфига: ${gasPriceConfig} gwei`);
+      if (gasPriceConfig) {
+        gasPrice = ethers.parseUnits(gasPriceConfig.toString(), 'gwei');
+      } else if (feeData.gasPrice) {
+        gasPrice = feeData.gasPrice;
+      } else {
+        // Fallback для сетей без EIP-1559
+        gasPrice = ethers.parseUnits('0.05', 'gwei');
+      }
+      
+      console.log(`Gas price из конфига: ${gasPriceConfig || 'auto'} gwei`);
       console.log(`Gas price в wei: ${gasPrice.toString()}`);
       
       return {
@@ -982,17 +1014,33 @@ class Web3Manager {
       };
     } catch (error) {
       console.error('Ошибка получения газовых параметров:', error);
-      // Fallback значения - используем значение из конфига
-      const gasPriceConfig = this.networkConfig.gasPrice || '0.05';
-      const gasPrice = ethers.parseUnits(gasPriceConfig.toString(), 'gwei');
       
-      console.log(`Fallback gas price из конфига: ${gasPriceConfig} gwei`);
-      console.log(`Fallback gas price в wei: ${gasPrice.toString()}`);
-      
-      return {
-        gasPrice: gasPrice,
-        gasLimit: this.networkConfig.gasLimit || '2000000'
-      };
+      // Fallback значения в зависимости от типа сети
+      if (this.networkConfig.supportsEIP1559) {
+        // Для EIP-1559 сетей используем maxFeePerGas и maxPriorityFeePerGas
+        const defaultMaxFeePerGas = ethers.parseUnits('50', 'gwei');
+        const defaultMaxPriorityFeePerGas = ethers.parseUnits('2', 'gwei');
+        
+        console.log(`Fallback для EIP-1559: maxFeePerGas=${defaultMaxFeePerGas}, maxPriorityFeePerGas=${defaultMaxPriorityFeePerGas}`);
+        
+        return {
+          maxFeePerGas: defaultMaxFeePerGas,
+          maxPriorityFeePerGas: defaultMaxPriorityFeePerGas,
+          gasLimit: this.networkConfig.gasLimit || '2000000'
+        };
+      } else {
+        // Для сетей без EIP-1559 используем gasPrice
+        const gasPriceConfig = this.networkConfig.gasPrice || '0.05';
+        const gasPrice = ethers.parseUnits(gasPriceConfig.toString(), 'gwei');
+        
+        console.log(`Fallback gas price из конфига: ${gasPriceConfig} gwei`);
+        console.log(`Fallback gas price в wei: ${gasPrice.toString()}`);
+        
+        return {
+          gasPrice: gasPrice,
+          gasLimit: this.networkConfig.gasLimit || '2000000'
+        };
+      }
     }
   }
 
