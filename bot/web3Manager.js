@@ -672,11 +672,30 @@ class Web3Manager {
     }
 
     // Убеждаемся, что percent - это целое число
-    const percentInt = typeof percent === 'string' ? parseInt(percent, 10) : Math.floor(Number(percent));
+    let percentInt;
+    if (typeof percent === 'string') {
+      percentInt = parseInt(percent, 10);
+    } else if (typeof percent === 'number') {
+      percentInt = Math.floor(percent);
+    } else {
+      // Если это BigInt или другой тип, конвертируем в число
+      percentInt = Number(percent);
+      if (isNaN(percentInt)) {
+        throw new Error(`Неверный формат процента: ${percent} (тип: ${typeof percent})`);
+      }
+      percentInt = Math.floor(percentInt);
+    }
+    
+    // Проверяем, что percentInt - это целое число от 1 до 100
+    if (isNaN(percentInt) || percentInt < 1 || percentInt > 100) {
+      throw new Error(`Неверный процент: ${percentInt}. Доступные значения: 5, 25, 50, 75`);
+    }
     
     if (![5, 25, 50, 75].includes(percentInt)) {
-      throw new Error('Неверный процент. Доступные значения: 5, 25, 50, 75');
+      throw new Error(`Неверный процент: ${percentInt}. Доступные значения: 5, 25, 50, 75`);
     }
+    
+    console.log(`exitAndSellPartial: percent=${percent}, percentInt=${percentInt}, type=${typeof percentInt}`);
 
     // Получаем информацию о токене из контракта
     let tokenInfo;
@@ -718,7 +737,17 @@ class Web3Manager {
 
     // Подготавливаем параметры газа
     const gasPrice = this.networkConfig.gasPrice;
-    const gasPriceWei = typeof gasPrice === 'string' ? BigInt(gasPrice) : BigInt(gasPrice);
+    let gasPriceWei;
+    if (typeof gasPrice === 'string') {
+      // Если это строка типа "0.05", нужно конвертировать в wei
+      if (gasPrice.includes('.')) {
+        gasPriceWei = ethers.parseUnits(gasPrice, 'gwei');
+      } else {
+        gasPriceWei = BigInt(gasPrice);
+      }
+    } else {
+      gasPriceWei = BigInt(gasPrice);
+    }
     
     const gasParams = {
       gasLimit: 500000n,
@@ -726,9 +755,18 @@ class Web3Manager {
     };
 
     try {
+      // Убеждаемся, что percentInt - это целое число (не дробное)
+      const percentForContract = Number.isInteger(percentInt) ? percentInt : Math.floor(Number(percentInt));
+      
+      if (percentForContract !== percentInt) {
+        console.warn(`⚠️ percentInt был округлен: ${percentInt} -> ${percentForContract}`);
+      }
+      
+      console.log(`Вызов exitAndSellPartial с параметрами: tokenAddress=${tokenAddress}, percent=${percentForContract} (тип: ${typeof percentForContract})`);
+      
       const tx = await this.multiZapContract.exitAndSellPartial(
         tokenAddress,
-        percentInt, // Используем percentInt вместо percent
+        percentForContract, // Явно передаем целое число
         0, // amountTokenMin - 0 для максимальной гибкости
         0, // amountBNBMin - 0 для максимальной гибкости
         0, // amountOutMinBNB - 0 для максимальной гибкости
