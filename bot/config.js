@@ -20,6 +20,7 @@ const NETWORKS = {
     rpcUrl: process.env.BSC_RPC_URL || 'https://bsc-dataseed1.binance.org',
     routerAddress: process.env.BSC_ROUTER_ADDRESS || '0x10ED43C718714eb63d5aA57B78B54704E256024E', // PancakeSwap V2 Router
     factoryAddress: process.env.BSC_FACTORY_ADDRESS || '0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73', // PancakeSwap V2 Factory
+    usdtAddress: process.env.BSC_USDT_ADDRESS || '0x55d398326f99059fF775485246999027B3197955', // USDT на BSC
     explorerUrl: 'https://bscscan.com',
     nativeCurrency: 'BNB',
     gasPrice: process.env.BSC_GAS_PRICE || '0.05', // 0.05 gwei (будет преобразовано в wei)

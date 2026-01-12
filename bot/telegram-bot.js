@@ -1,4 +1,5 @@
 const TelegramBot = require('node-telegram-bot-api');
+const { ethers } = require('ethers');
 const Web3Manager = require('./web3Manager');
 const UserManager = require('./userManager');
 const config = require('./config');
@@ -836,6 +837,31 @@ class TelegramBotManager {
           this.bot.answerCallbackQuery(callbackQuery.id, { text: 'Информация о токене загружена' });
         }
         
+        // Обработка выбора типа пары для добавления токена
+        else if (data.startsWith('addtoken_wbnb_') || data.startsWith('addtoken_usdt_')) {
+          const useUSDT = data.startsWith('addtoken_usdt_');
+          const chatIdStr = data.split('_').pop();
+          const targetChatId = parseInt(chatIdStr);
+          
+          if (targetChatId !== chatId) {
+            this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Неверный запрос' });
+            return;
+          }
+          
+          this.bot.editMessageText(
+            useUSDT ? '💵 Добавление токена с USDT парой\n\nВведите адрес токена:' : 
+                      '🟡 Добавление токена с WBNB парой\n\nВведите адрес токена:',
+            {
+              chat_id: chatId,
+              message_id: callbackQuery.message.message_id
+            }
+          );
+
+          this.bot.answerCallbackQuery(callbackQuery.id);
+          
+          this.handleAddTokenWithType(chatId, useUSDT);
+        }
+        
         // Обработка покупки с фиксированной суммой
         else if (data.startsWith('buy_')) {
           const [, tokenAddress, amount] = data.split('_');
@@ -1392,7 +1418,40 @@ class TelegramBotManager {
       return;
     }
 
+    // Спрашиваем тип пары
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: '🟡 WBNB пара', callback_data: `addtoken_wbnb_${chatId}` }
+        ],
+        [
+          { text: '💵 USDT пара', callback_data: `addtoken_usdt_${chatId}` }
+        ],
+        [
+          { text: '❌ Отмена', callback_data: 'cancel' }
+        ]
+      ]
+    };
+
+    this.bot.sendMessage(chatId, '🔧 Выберите тип пары для токена:', {
+      reply_markup: keyboard
+    });
+  }
+
+  handleAddTokenWithType(chatId, useUSDT) {
+    // Проверяем пользователя и контракт перед ожиданием ввода
+    const user = this.userManager.getUser(chatId);
+    if (!user || !user.contractAddress) {
+      this.bot.sendMessage(chatId, '❌ Сначала разверните контракт командой /deploy');
+      return;
+    }
+
+    const pairType = useUSDT ? 'USDT' : 'WBNB';
+    this.bot.sendMessage(chatId, `💵 Добавление токена с ${pairType} парой\n\nВведите адрес токена:`);
+
     this.bot.once('message', async (msg) => {
+      if (msg.chat.id !== chatId) return;
+      
       try {
         const tokenAddress = msg.text.trim();
         
@@ -1413,13 +1472,14 @@ class TelegramBotManager {
         web3Manager.setPrivateKey(currentUser.privateKey);
         web3Manager.setContractAddress(userContract);
         
-        this.bot.sendMessage(chatId, '🔍 Поиск LP токена...');
-        const txHash = await web3Manager.addTokenAuto(tokenAddress);
+        this.bot.sendMessage(chatId, useUSDT ? '🔍 Поиск USDT LP токена...' : '🔍 Поиск WBNB LP токена...');
+        const txHash = await web3Manager.addTokenAuto(tokenAddress, useUSDT);
         
         const explorerUrl = this.getExplorerUrl(chatId);
         this.bot.sendMessage(chatId, 
-          `✅ Токен успешно добавлен с автоматическим поиском LP!\n\n` +
+          `✅ Токен успешно добавлен!\n\n` +
           `📍 Токен: \`${tokenAddress}\`\n` +
+          `💵 Тип пары: ${pairType}\n` +
           `🔗 Транзакция: ${explorerUrl}/tx/${txHash}\n\n` +
           `📊 Открываю ваши позиции...`,
           { parse_mode: 'Markdown' }
@@ -1438,15 +1498,29 @@ class TelegramBotManager {
             let message = '📊 Ваши позиции:\n\n';
             const keyboard = [];
             
+            // Получаем WETH адрес для определения типа пары
+            const routerContract = new ethers.Contract(
+              web3Manager.networkConfig.routerAddress,
+              ['function WETH() external pure returns (address)'],
+              web3Manager.provider
+            );
+            const wethAddress = await routerContract.WETH().catch(() => null);
+            
             for (let i = 0; i < tokens.length; i++) {
-              const tokenInfo = await this.web3Manager.getTokenInfo(tokens[i]);
+              const tokenInfo = await web3Manager.getTokenInfo(tokens[i]);
               const shortAddress = `${tokens[i].slice(0, 6)}...${tokens[i].slice(-4)}`;
               const status = tokenInfo.isActive ? '✅' : '❌';
+              const baseToken = tokenInfo.baseToken;
+              let pairType = 'Unknown';
               
-              message += `${i + 1}. ${status} \`${shortAddress}\`\n`;
+              if (wethAddress && baseToken) {
+                pairType = baseToken.toLowerCase() === wethAddress.toLowerCase() ? 'WBNB' : 'USDT';
+              }
+              
+              message += `${i + 1}. ${status} \`${shortAddress}\` (${pairType})\n`;
               
               keyboard.push([{
-                text: `${i + 1}. ${shortAddress} ${status}`,
+                text: `${i + 1}. ${shortAddress} ${status} (${pairType})`,
                 callback_data: `select_token_${tokens[i]}`
               }]);
             }

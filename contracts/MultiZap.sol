@@ -15,6 +15,22 @@ interface IUniswapV2Router {
         uint deadline
     ) external payable;
 
+    function swapExactTokensForTokensSupportingFeeOnTransferTokens(
+        uint amountIn,
+        uint amountOutMin,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external;
+
+    function swapExactTokensForTokens(
+        uint amountIn,
+        uint amountOutMin,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external returns (uint[] memory amounts);
+
     function addLiquidityETH(
         address token,
         uint amountTokenDesired,
@@ -24,6 +40,17 @@ interface IUniswapV2Router {
         uint deadline
     ) external payable returns (uint amountToken, uint amountETH, uint liquidity);
 
+    function addLiquidity(
+        address tokenA,
+        address tokenB,
+        uint amountADesired,
+        uint amountBDesired,
+        uint amountAMin,
+        uint amountBMin,
+        address to,
+        uint deadline
+    ) external returns (uint amountA, uint amountB, uint liquidity);
+
     function removeLiquidityETHSupportingFeeOnTransferTokens(
         address token,
         uint liquidity,
@@ -32,6 +59,16 @@ interface IUniswapV2Router {
         address to,
         uint deadline
     ) external returns (uint amountETH);
+
+    function removeLiquiditySupportingFeeOnTransferTokens(
+        address tokenA,
+        address tokenB,
+        uint liquidity,
+        uint amountAMin,
+        uint amountBMin,
+        address to,
+        uint deadline
+    ) external returns (uint amountA, uint amountB);
 
     function swapExactTokensForETHSupportingFeeOnTransferTokens(
         uint amountIn,
@@ -53,66 +90,88 @@ contract MultiZap is Ownable {
     struct TokenInfo {
         address token;
         address lpToken;
+        address baseToken;  // WBNB или USDT
         bool isActive;
     }
 
     IUniswapV2Router public router;
     IUniswapV2Factory public factory;
+    address public usdtAddress;  // Адрес USDT токена
     mapping(address => TokenInfo) public supportedTokens;
     address[] public tokenList;
     
-    event TokenAdded(address indexed token, address indexed lpToken);
+    event TokenAdded(address indexed token, address indexed lpToken, address indexed baseToken);
     event TokenRemoved(address indexed token);
     event TokenStatusChanged(address indexed token, bool isActive);
     event LiquidityWithdrawn(address indexed token, uint256 lpAmount, uint256 tokenAmount, uint256 nativeAmount);
+    event USDTAddressSet(address indexed usdtAddress);
 
-    constructor(address _router, address _factory) Ownable(msg.sender) {
+    constructor(address _router, address _factory, address _usdtAddress) Ownable(msg.sender) {
         require(_router != address(0), "INVALID_ROUTER");
         require(_factory != address(0), "INVALID_FACTORY");
         router = IUniswapV2Router(_router);
         factory = IUniswapV2Factory(_factory);
+        usdtAddress = _usdtAddress;
+    }
+
+    /**
+     * @dev Устанавливает адрес USDT токена
+     */
+    function setUSDTAddress(address _usdtAddress) external onlyOwner {
+        require(_usdtAddress != address(0), "INVALID_USDT_ADDRESS");
+        usdtAddress = _usdtAddress;
+        emit USDTAddressSet(_usdtAddress);
     }
 
     /**
      * @dev Добавляет новый токен для работы
      * @param _token Адрес токена
      * @param _lpToken Адрес LP токена
+     * @param _baseToken Адрес базового токена (WBNB или USDT)
      */
-    function addToken(address _token, address _lpToken) external onlyOwner {
+    function addToken(address _token, address _lpToken, address _baseToken) external onlyOwner {
         require(_token != address(0), "INVALID_TOKEN");
         require(_lpToken != address(0), "INVALID_LP_TOKEN");
+        require(_baseToken != address(0), "INVALID_BASE_TOKEN");
+        address wbnb = router.WETH();
+        require(_baseToken == wbnb || _baseToken == usdtAddress, "INVALID_BASE_TOKEN");
         require(supportedTokens[_token].token == address(0), "TOKEN_ALREADY_EXISTS");
 
         supportedTokens[_token] = TokenInfo({
             token: _token,
             lpToken: _lpToken,
+            baseToken: _baseToken,
             isActive: true
         });
         
         tokenList.push(_token);
-        emit TokenAdded(_token, _lpToken);
+        emit TokenAdded(_token, _lpToken, _baseToken);
     }
 
     /**
      * @dev Добавляет новый токен с автоматическим поиском LP токена
      * @param _token Адрес токена
+     * @param _useUSDT true для USDT пары, false для WBNB пары
      */
-    function addTokenAuto(address _token) external onlyOwner {
+    function addTokenAuto(address _token, bool _useUSDT) external onlyOwner {
         require(_token != address(0), "INVALID_TOKEN");
         require(supportedTokens[_token].token == address(0), "TOKEN_ALREADY_EXISTS");
 
-        address wbnb = router.WETH();
-        address lpToken = factory.getPair(_token, wbnb);
+        address baseToken = _useUSDT ? usdtAddress : router.WETH();
+        require(baseToken != address(0), "BASE_TOKEN_NOT_SET");
+        
+        address lpToken = factory.getPair(_token, baseToken);
         require(lpToken != address(0), "LP_PAIR_NOT_FOUND");
 
         supportedTokens[_token] = TokenInfo({
             token: _token,
             lpToken: lpToken,
+            baseToken: baseToken,
             isActive: true
         });
         
         tokenList.push(_token);
-        emit TokenAdded(_token, lpToken);
+        emit TokenAdded(_token, lpToken, baseToken);
     }
 
     /**
@@ -164,7 +223,7 @@ contract MultiZap is Ownable {
     }
 
     /**
-     * @dev Выполняет zap-in для указанного токена
+     * @dev Выполняет zap-in для указанного токена (работает с WBNB и USDT)
      * @param _token Адрес токена
      * @param amountOutMinToken Минимальное количество токенов при свопе
      * @param amountTokenMin Минимальное количество токенов при добавлении ликвидности
@@ -180,42 +239,102 @@ contract MultiZap is Ownable {
         require(supportedTokens[_token].token != address(0), "TOKEN_NOT_SUPPORTED");
         require(supportedTokens[_token].isActive, "TOKEN_INACTIVE");
 
-        uint half = msg.value / 2;
-        uint otherHalf = msg.value - half;
+        TokenInfo memory tokenInfo = supportedTokens[_token];
+        address baseToken = tokenInfo.baseToken;
+        address wbnb = router.WETH();
 
-        address[] memory path = new address[](2);
-        path[0] = router.WETH();
-        path[1] = _token;
+        if (baseToken == wbnb) {
+            // WBNB пара - существующая логика
+            uint half = msg.value / 2;
+            uint otherHalf = msg.value - half;
 
-        // Сначала свопаем половину BNB на токены
-        router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: half}(
-            amountOutMinToken,
-            path,
-            address(this),
-            block.timestamp + 300
-        );
+            address[] memory path = new address[](2);
+            path[0] = wbnb;
+            path[1] = _token;
 
-        // Получаем баланс токенов после свопа
-        uint tokenBal = IERC20(_token).balanceOf(address(this));
-        require(tokenBal > 0, "NO_TOKENS_RECEIVED");
+            // Сначала свопаем половину BNB на токены
+            router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: half}(
+                amountOutMinToken,
+                path,
+                address(this),
+                block.timestamp + 300
+            );
 
-        // Даем разрешение роутеру на использование токенов
-        IERC20(_token).approve(address(router), tokenBal);
+            // Получаем баланс токенов после свопа
+            uint tokenBal = IERC20(_token).balanceOf(address(this));
+            require(tokenBal > 0, "NO_TOKENS_RECEIVED");
 
-        // Добавляем ликвидность
-        router.addLiquidityETH{value: otherHalf}(
-            _token,
-            tokenBal,
-            amountTokenMin,
-            amountBNBMin,
-            address(this),
-            block.timestamp + 300
-        );
+            // Даем разрешение роутеру на использование токенов
+            IERC20(_token).approve(address(router), tokenBal);
+
+            // Добавляем ликвидность
+            router.addLiquidityETH{value: otherHalf}(
+                _token,
+                tokenBal,
+                amountTokenMin,
+                amountBNBMin,
+                address(this),
+                block.timestamp + 300
+            );
+        } else {
+            // USDT пара - новая логика
+            require(baseToken == usdtAddress, "INVALID_BASE_TOKEN");
+            
+            // Свопаем весь BNB на USDT
+            address[] memory pathBNBtoUSDT = new address[](2);
+            pathBNBtoUSDT[0] = wbnb;
+            pathBNBtoUSDT[1] = usdtAddress;
+
+            router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: msg.value}(
+                0,
+                pathBNBtoUSDT,
+                address(this),
+                block.timestamp + 300
+            );
+
+            uint usdtBal = IERC20(usdtAddress).balanceOf(address(this));
+            require(usdtBal > 0, "NO_USDT_RECEIVED");
+
+            uint halfUSDT = usdtBal / 2;
+            uint otherHalfUSDT = usdtBal - halfUSDT;
+
+            // Свопаем половину USDT на токен
+            address[] memory pathUSDTtoToken = new address[](2);
+            pathUSDTtoToken[0] = usdtAddress;
+            pathUSDTtoToken[1] = _token;
+
+            IERC20(usdtAddress).approve(address(router), halfUSDT);
+            router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                halfUSDT,
+                amountOutMinToken,
+                pathUSDTtoToken,
+                address(this),
+                block.timestamp + 300
+            );
+
+            uint tokenBal = IERC20(_token).balanceOf(address(this));
+            require(tokenBal > 0, "NO_TOKENS_RECEIVED");
+
+            // Добавляем ликвидность Token/USDT
+            IERC20(_token).approve(address(router), tokenBal);
+            IERC20(usdtAddress).approve(address(router), otherHalfUSDT);
+
+            router.addLiquidity(
+                _token,
+                usdtAddress,
+                tokenBal,
+                otherHalfUSDT,
+                amountTokenMin,
+                0,  // amountUSDTMin - 0 для гибкости
+                address(this),
+                block.timestamp + 300
+            );
+        }
     }
 
 
     /**
-     * @dev Выполняет exit и sell для указанного токена
+     * @dev Выполняет exit и sell для указанного токена (работает с WBNB и USDT)
      * @param _token Адрес токена
      * @param amountTokenMin Минимальное количество токенов при удалении ликвидности
      * @param amountBNBMin Минимальное количество BNB при удалении ликвидности
@@ -229,49 +348,106 @@ contract MultiZap is Ownable {
     ) external onlyOwner {
         require(supportedTokens[_token].token != address(0), "TOKEN_NOT_SUPPORTED");
         
-        address lpToken = supportedTokens[_token].lpToken;
+        TokenInfo memory tokenInfo = supportedTokens[_token];
+        address lpToken = tokenInfo.lpToken;
+        address baseToken = tokenInfo.baseToken;
+        address wbnb = router.WETH();
         uint lpBal = IERC20(lpToken).balanceOf(address(this));
         require(lpBal > 0, "NO_LP");
 
         // Даем разрешение роутеру на использование LP токенов
         IERC20(lpToken).approve(address(router), lpBal);
 
-        // Удаляем ликвидность
-        router.removeLiquidityETHSupportingFeeOnTransferTokens(
-            _token,
-            lpBal,
-            amountTokenMin,
-            amountBNBMin,
-            address(this),
-            block.timestamp + 300
-        );
-
-        // Получаем баланс токенов после удаления ликвидности
-        uint tokenBal = IERC20(_token).balanceOf(address(this));
-        if (tokenBal > 0) {
-            address[] memory path = new address[](2);
-            path[0] = _token;
-            path[1] = router.WETH();
-
-            // Даем разрешение роутеру на использование токенов
-            IERC20(_token).approve(address(router), tokenBal);
-
-            // Свопаем токены на BNB
-            router.swapExactTokensForETHSupportingFeeOnTransferTokens(
-                tokenBal,
-                amountOutMinBNB,
-                path,
+        if (baseToken == wbnb) {
+            // WBNB пара - существующая логика
+            // Удаляем ликвидность
+            router.removeLiquidityETHSupportingFeeOnTransferTokens(
+                _token,
+                lpBal,
+                amountTokenMin,
+                amountBNBMin,
                 address(this),
                 block.timestamp + 300
             );
-        }
 
-        // Переводим весь BNB владельцу
-        payable(owner()).transfer(address(this).balance);
+            // Получаем баланс токенов после удаления ликвидности
+            uint tokenBal = IERC20(_token).balanceOf(address(this));
+            if (tokenBal > 0) {
+                address[] memory path = new address[](2);
+                path[0] = _token;
+                path[1] = wbnb;
+
+                // Даем разрешение роутеру на использование токенов
+                IERC20(_token).approve(address(router), tokenBal);
+
+                // Свопаем токены на BNB
+                router.swapExactTokensForETHSupportingFeeOnTransferTokens(
+                    tokenBal,
+                    amountOutMinBNB,
+                    path,
+                    address(this),
+                    block.timestamp + 300
+                );
+            }
+
+            // Переводим весь BNB владельцу
+            payable(owner()).transfer(address(this).balance);
+        } else {
+            // USDT пара - новая логика
+            require(baseToken == usdtAddress, "INVALID_BASE_TOKEN");
+
+            router.removeLiquiditySupportingFeeOnTransferTokens(
+                _token,
+                usdtAddress,
+                lpBal,
+                amountTokenMin,
+                0,  // amountUSDTMin
+                address(this),
+                block.timestamp + 300
+            );
+
+            uint tokenBal = IERC20(_token).balanceOf(address(this));
+
+            // Свопаем токены на USDT
+            if (tokenBal > 0) {
+                address[] memory pathTokenToUSDT = new address[](2);
+                pathTokenToUSDT[0] = _token;
+                pathTokenToUSDT[1] = usdtAddress;
+
+                IERC20(_token).approve(address(router), tokenBal);
+                router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                    tokenBal,
+                    0,
+                    pathTokenToUSDT,
+                    address(this),
+                    block.timestamp + 300
+                );
+            }
+
+            // Свопаем весь USDT на BNB
+            uint finalUSDTBal = IERC20(usdtAddress).balanceOf(address(this));
+            if (finalUSDTBal > 0) {
+                address[] memory pathUSDTtoBNB = new address[](2);
+                pathUSDTtoBNB[0] = usdtAddress;
+                pathUSDTtoBNB[1] = wbnb;
+
+                IERC20(usdtAddress).approve(address(router), finalUSDTBal);
+                router.swapExactTokensForETHSupportingFeeOnTransferTokens(
+                    finalUSDTBal,
+                    amountOutMinBNB,
+                    pathUSDTtoBNB,
+                    address(this),
+                    block.timestamp + 300
+                );
+            }
+
+            // Переводим весь BNB владельцу
+            payable(owner()).transfer(address(this).balance);
+        }
     }
 
     /**
-     * @dev Снимает ликвидность без продажи токена
+     * @dev Снимает ликвидность без продажи токена (работает с WBNB и USDT)
      * @param _token Адрес токена
      */
     function withdrawLiquidity(address _token) external onlyOwner {
@@ -280,25 +456,46 @@ contract MultiZap is Ownable {
         require(info.isActive, "TOKEN_INACTIVE");
 
         address lpToken = info.lpToken;
+        address baseToken = info.baseToken;
+        address wbnb = router.WETH();
         uint lpBal = IERC20(lpToken).balanceOf(address(this));
         require(lpBal > 0, "NO_LP");
 
         IERC20(lpToken).approve(address(router), lpBal);
 
-        router.removeLiquidityETHSupportingFeeOnTransferTokens(
-            _token,
-            lpBal,
-            0,
-            0,
-            address(this),
-            block.timestamp + 300
-        );
+        if (baseToken == wbnb) {
+            router.removeLiquidityETHSupportingFeeOnTransferTokens(
+                _token,
+                lpBal,
+                0,
+                0,
+                address(this),
+                block.timestamp + 300
+            );
+        } else {
+            router.removeLiquiditySupportingFeeOnTransferTokens(
+                _token,
+                baseToken,
+                lpBal,
+                0,
+                0,
+                address(this),
+                block.timestamp + 300
+            );
+        }
 
         uint tokenBal = IERC20(_token).balanceOf(address(this));
         uint nativeBal = address(this).balance;
 
         if (tokenBal > 0) {
             IERC20(_token).safeTransfer(owner(), tokenBal);
+        }
+
+        if (baseToken != wbnb) {
+            uint baseBal = IERC20(baseToken).balanceOf(address(this));
+            if (baseBal > 0) {
+                IERC20(baseToken).safeTransfer(owner(), baseBal);
+            }
         }
 
         if (nativeBal > 0) {

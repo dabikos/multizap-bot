@@ -153,7 +153,7 @@ class Web3Manager {
     }
   }
 
-  async addToken(tokenAddress, lpTokenAddress) {
+  async addToken(tokenAddress, lpTokenAddress, baseTokenAddress) {
     if (!this.multiZapContract) {
       throw new Error('Контракт не подключен');
     }
@@ -164,10 +164,13 @@ class Web3Manager {
     if (!ethers.isAddress(lpTokenAddress)) {
       throw new Error('Неверный адрес LP токена');
     }
+    if (!ethers.isAddress(baseTokenAddress)) {
+      throw new Error('Неверный адрес базового токена');
+    }
 
     try {
       const gasParams = await this.getGasParams();
-      const tx = await this.multiZapContract.addToken(tokenAddress, lpTokenAddress, gasParams);
+      const tx = await this.multiZapContract.addToken(tokenAddress, lpTokenAddress, baseTokenAddress, gasParams);
       await tx.wait();
       return tx.hash;
     } catch (error) {
@@ -175,7 +178,7 @@ class Web3Manager {
     }
   }
 
-  async addTokenAuto(tokenAddress) {
+  async addTokenAuto(tokenAddress, useUSDT = false) {
     if (!this.multiZapContract) {
       throw new Error('Контракт не подключен');
     }
@@ -199,14 +202,21 @@ class Web3Manager {
       );
       
       const wethAddress = await routerContract.WETH();
-      const lpPair = await factoryContract.getPair(tokenAddress, wethAddress);
+      const baseTokenAddress = useUSDT ? (this.networkConfig.usdtAddress || ethers.ZeroAddress) : wethAddress;
+      
+      if (useUSDT && baseTokenAddress === ethers.ZeroAddress) {
+        throw new Error('USDT_ADDRESS_NOT_SET: Адрес USDT не настроен в конфигурации сети');
+      }
+      
+      const lpPair = await factoryContract.getPair(tokenAddress, baseTokenAddress);
+      const baseTokenName = useUSDT ? 'USDT' : 'WETH/WBNB';
       
       if (lpPair === ethers.ZeroAddress) {
-        throw new Error(`LP_PAIR_NOT_FOUND: Для токена ${tokenAddress} не найдена LP пара с WETH (${wethAddress}). Возможно, токен новый и пара еще не создана, или используется другой DEX. Попробуйте добавить токен вручную с указанием LP адреса.`);
+        throw new Error(`LP_PAIR_NOT_FOUND: Для токена ${tokenAddress} не найдена LP пара с ${baseTokenName} (${baseTokenAddress}). Возможно, токен новый и пара еще не создана, или используется другой DEX. Попробуйте добавить токен вручную с указанием LP адреса.`);
       }
     } catch (error) {
-      // Если ошибка уже содержит LP_PAIR_NOT_FOUND, пробрасываем её дальше
-      if (error.message.includes('LP_PAIR_NOT_FOUND')) {
+      // Если ошибка уже содержит LP_PAIR_NOT_FOUND или USDT_ADDRESS_NOT_SET, пробрасываем её дальше
+      if (error.message.includes('LP_PAIR_NOT_FOUND') || error.message.includes('USDT_ADDRESS_NOT_SET')) {
         throw error;
       }
       // Иначе продолжаем - возможно проблема с подключением, но попробуем добавить
@@ -214,7 +224,8 @@ class Web3Manager {
     }
 
     try {
-      const tx = await this.multiZapContract.addTokenAuto(tokenAddress);
+      const gasParams = await this.getGasParams();
+      const tx = await this.multiZapContract.addTokenAuto(tokenAddress, useUSDT, gasParams);
       await tx.wait();
       return tx.hash;
     } catch (error) {
