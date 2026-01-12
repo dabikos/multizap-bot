@@ -536,6 +536,172 @@ contract MultiZap is Ownable {
     }
 
     /**
+     * @dev Выполняет частичную продажу LP токенов (5%, 25%, 50%, 75%)
+     * @param _token Адрес токена
+     * @param percent Процент продажи (5, 25, 50, 75)
+     * @param amountTokenMin Минимальное количество токенов при удалении ликвидности
+     * @param amountBNBMin Минимальное количество BNB при удалении ликвидности
+     * @param amountOutMinBNB Минимальное количество BNB при свопе токенов
+     */
+    function exitAndSellPartial(
+        address _token,
+        uint percent,
+        uint amountTokenMin,
+        uint amountBNBMin,
+        uint amountOutMinBNB
+    ) external onlyOwner {
+        require(supportedTokens[_token].token != address(0), "TOKEN_NOT_SUPPORTED");
+        require(percent == 5 || percent == 25 || percent == 50 || percent == 75, "INVALID_PERCENT");
+        
+        TokenInfo memory tokenInfo = supportedTokens[_token];
+        address baseToken = tokenInfo.baseToken;
+        address wbnb = router.WETH();
+        
+        // Проверяем, что baseToken установлен
+        require(baseToken != address(0), "BASE_TOKEN_NOT_SET");
+        
+        // Определяем правильный LP токен из Factory (используя baseToken из tokenInfo)
+        address expectedLpToken;
+        if (_token < baseToken) {
+            expectedLpToken = factory.getPair(_token, baseToken);
+        } else {
+            expectedLpToken = factory.getPair(baseToken, _token);
+        }
+        require(expectedLpToken != address(0), "LP_PAIR_NOT_FOUND_FOR_BASE_TOKEN");
+        
+        address lpToken = expectedLpToken; // По умолчанию используем LP из Factory
+        
+        // Дополнительная проверка: если сохраненный LP токен имеет баланс, используем его
+        address storedLpToken = tokenInfo.lpToken;
+        if (storedLpToken != address(0) && storedLpToken != expectedLpToken) {
+            uint storedLpBal = IERC20(storedLpToken).balanceOf(address(this));
+            if (storedLpBal > 0) {
+                lpToken = storedLpToken;
+            }
+        }
+
+        uint lpBal = IERC20(lpToken).balanceOf(address(this));
+        require(lpBal > 0, "NO_LP");
+        
+        // Вычисляем количество LP токенов для продажи
+        uint lpToSell = (lpBal * percent) / 100;
+        require(lpToSell > 0, "INSUFFICIENT_LP_TO_SELL");
+
+        // Используем forceApprove из SafeERC20 для совместимости со всеми токенами
+        IERC20(lpToken).forceApprove(address(router), lpToSell);
+
+        if (baseToken == wbnb) {
+            // WBNB пара - существующая логика
+            router.removeLiquidityETHSupportingFeeOnTransferTokens(
+                _token,
+                lpToSell,
+                amountTokenMin,
+                amountBNBMin,
+                address(this),
+                block.timestamp + 300
+            );
+
+            // Получаем баланс токенов после удаления ликвидности
+            uint tokenBal = IERC20(_token).balanceOf(address(this));
+            if (tokenBal > 0) {
+                address[] memory path = new address[](2);
+                path[0] = _token;
+                path[1] = wbnb;
+
+                // Даем разрешение роутеру на использование токенов
+                IERC20(_token).forceApprove(address(router), tokenBal);
+
+                // Свопаем токены на BNB
+                router.swapExactTokensForETHSupportingFeeOnTransferTokens(
+                    tokenBal,
+                    amountOutMinBNB,
+                    path,
+                    address(this),
+                    block.timestamp + 300
+                );
+            }
+
+            // Переводим весь BNB владельцу
+            uint finalBNBBal = address(this).balance;
+            require(finalBNBBal > 0, "NO_BNB_RECEIVED");
+            (bool success, ) = payable(owner()).call{value: finalBNBBal}("");
+            require(success, "BNB_TRANSFER_FAILED");
+        } else {
+            // USDT пара - новая логика
+            require(baseToken == usdtAddress, "INVALID_BASE_TOKEN");
+
+            address tokenA;
+            address tokenB;
+            uint amountAMin;
+            uint amountBMin;
+            if (_token < usdtAddress) {
+                tokenA = _token;
+                tokenB = usdtAddress;
+                amountAMin = amountTokenMin;
+                amountBMin = 0;
+            } else {
+                tokenA = usdtAddress;
+                tokenB = _token;
+                amountAMin = 0;
+                amountBMin = amountTokenMin;
+            }
+
+            // Удаляем ликвидность с правильным порядком токенов
+            router.removeLiquidity(
+                tokenA,
+                tokenB,
+                lpToSell,
+                amountAMin,
+                amountBMin,
+                address(this),
+                block.timestamp + 300
+            );
+
+            // Получаем балансы после удаления ликвидности
+            uint tokenBal = IERC20(_token).balanceOf(address(this));
+            uint usdtBal = IERC20(usdtAddress).balanceOf(address(this));
+
+            // Свопаем токены на USDT, если есть
+            if (tokenBal > 0) {
+                address[] memory path = new address[](2);
+                path[0] = _token;
+                path[1] = usdtAddress;
+
+                IERC20(_token).forceApprove(address(router), tokenBal);
+                router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                    tokenBal,
+                    amountOutMinBNB, // Используем как минимальное количество USDT
+                    path,
+                    address(this),
+                    block.timestamp + 300
+                );
+                usdtBal = IERC20(usdtAddress).balanceOf(address(this));
+            }
+
+            // Свопаем USDT на BNB
+            require(usdtBal > 0, "NO_USDT_TO_SWAP");
+            address[] memory pathUSDTtoBNB = new address[](2);
+            pathUSDTtoBNB[0] = usdtAddress;
+            pathUSDTtoBNB[1] = wbnb;
+
+            IERC20(usdtAddress).forceApprove(address(router), usdtBal);
+            router.swapExactTokensForETHSupportingFeeOnTransferTokens(
+                usdtBal,
+                amountOutMinBNB,
+                pathUSDTtoBNB,
+                address(this),
+                block.timestamp + 300
+            );
+
+            // Переводим весь BNB владельцу
+            uint finalBNBBal = address(this).balance;
+            require(finalBNBBal > 0, "NO_BNB_RECEIVED");
+            (bool success, ) = payable(owner()).call{value: finalBNBBal}("");
+            require(success, "BNB_TRANSFER_FAILED");
+        }
+    }
+
+    /**
      * @dev Снимает ликвидность без продажи токена (работает с WBNB и USDT)
      * @param _token Адрес токена
      */

@@ -129,7 +129,7 @@ class TelegramBotManager {
           { text: '💰 Другая сумма', callback_data: `custom_amount_${tokenAddress}` }
         ],
         [
-          { text: '💸 Продать все', callback_data: `sell_${tokenAddress}` }
+          { text: '💸 Продать', callback_data: `sell_partial_${tokenAddress}` }
         ],
         [
           { text: '📊 Обновить', callback_data: `select_token_${tokenAddress}` },
@@ -964,9 +964,45 @@ class TelegramBotManager {
           }
         }
 
-        // Обработка продажи токена
-        else if (data.startsWith('sell_')) {
-          const tokenAddress = data.replace('sell_', '');
+        // Обработка выбора процента продажи
+        else if (data.startsWith('sell_partial_')) {
+          const tokenAddress = data.replace('sell_partial_', '');
+          const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+          
+          await this.bot.editMessageText(
+            `💸 Выберите процент продажи для токена \`${shortAddress}\`:\n\n` +
+            `Выберите, какую часть LP токенов вы хотите продать:`,
+            {
+              chat_id: chatId,
+              message_id: callbackQuery.message.message_id,
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '5%', callback_data: `sell_percent_${tokenAddress}_5` },
+                    { text: '25%', callback_data: `sell_percent_${tokenAddress}_25` },
+                    { text: '50%', callback_data: `sell_percent_${tokenAddress}_50` }
+                  ],
+                  [
+                    { text: '75%', callback_data: `sell_percent_${tokenAddress}_75` },
+                    { text: '100% (все)', callback_data: `sell_percent_${tokenAddress}_100` }
+                  ],
+                  [
+                    { text: '❌ Отмена', callback_data: `select_token_${tokenAddress}` }
+                  ]
+                ]
+              }
+            }
+          );
+          
+          this.bot.answerCallbackQuery(callbackQuery.id);
+        }
+        
+        // Обработка продажи с выбранным процентом
+        else if (data.startsWith('sell_percent_')) {
+          const parts = data.replace('sell_percent_', '').split('_');
+          const tokenAddress = parts[0];
+          const percent = parseInt(parts[1]);
           const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
           
           const web3Manager = this.getWeb3ManagerForUser(chatId);
@@ -974,9 +1010,10 @@ class TelegramBotManager {
           const userContract = this.userManager.getUserContract(chatId);
           web3Manager.setContractAddress(userContract);
           
+          const percentText = percent === 100 ? 'все' : `${percent}%`;
           await this.bot.editMessageText(
-            `⏳ Выполняется продажа токена \`${shortAddress}\`...\n\n` +
-            `🔄 Конвертируем LP токены обратно в ETH`,
+            `⏳ Выполняется продажа ${percentText} LP токенов для токена \`${shortAddress}\`...\n\n` +
+            `🔄 Конвертируем LP токены обратно в ${config.getNetworkConfig(this.userManager.getUserNetwork(chatId)).nativeCurrency}`,
             {
               chat_id: chatId,
               message_id: callbackQuery.message.message_id,
@@ -985,22 +1022,22 @@ class TelegramBotManager {
           );
           
           try {
-            // Проверяем LP баланс перед продажей для более понятного сообщения
-            let lpBalance = '0';
-            try {
-              lpBalance = await web3Manager.getLpBalance(tokenAddress);
-            } catch (e) {
-              console.warn('Не удалось получить LP баланс перед продажей:', e.message);
+            let txHash;
+            if (percent === 100) {
+              // Продаем все через exitAndSell
+              txHash = await web3Manager.exitAndSell(tokenAddress);
+            } else {
+              // Продаем частично через exitAndSellPartial
+              txHash = await web3Manager.exitAndSellPartial(tokenAddress, percent);
             }
-            
-            const txHash = await web3Manager.exitAndSell(tokenAddress);
             
             const explorerUrl = this.getExplorerUrl(chatId);
             const networkConfig = config.getNetworkConfig(this.userManager.getUserNetwork(chatId));
             await this.bot.editMessageText(
-              `✅ Продажа выполнена успешно!\n\n` +
+              `✅ Продажа ${percentText} выполнена успешно!\n\n` +
               `📍 Токен: \`${shortAddress}\`\n` +
-              `💸 Все LP токены конвертированы в ${networkConfig.nativeCurrency}\n` +
+              `💸 Продано: ${percentText} LP токенов\n` +
+              `💰 Конвертировано в ${networkConfig.nativeCurrency}\n` +
               `🔗 Транзакция: ${explorerUrl}/tx/${txHash}\n\n` +
               `💡 Используйте /positions для просмотра обновленных позиций`,
               {
@@ -1011,6 +1048,15 @@ class TelegramBotManager {
             );
             
             this.bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Продажа выполнена!' });
+            
+            // Обновляем позицию через 2 секунды
+            setTimeout(async () => {
+              try {
+                await this.showTokenPosition(chatId, tokenAddress, callbackQuery.message.message_id);
+              } catch (error) {
+                console.error('Ошибка обновления позиции после продажи:', error.message);
+              }
+            }, 2000);
           } catch (error) {
             let errorMessage = error.message;
             
@@ -1028,13 +1074,18 @@ class TelegramBotManager {
               errorMessage = `❌ **Токен неактивен**\n\n` +
                 `💡 Этот токен был деактивирован в контракте.\n` +
                 `📍 Токен: \`${shortAddress}\``;
-            } else if (errorMessage.includes('отклонена')) {
+            } else if (errorMessage.includes('отклонена') || errorMessage.includes('отклонен')) {
               errorMessage = `❌ **Транзакция отклонена**\n\n` +
                 `💡 Транзакция была отклонена контрактом.\n\n` +
                 `**Возможные причины:**\n` +
                 `• Нет LP токенов для продажи\n` +
                 `• Недостаточно ликвидности в пуле\n` +
                 `• Токен неактивен\n\n` +
+                `📍 Токен: \`${shortAddress}\``;
+            } else if (errorMessage.includes('Недостаточно LP токенов')) {
+              errorMessage = `❌ **Недостаточно LP токенов**\n\n` +
+                `💡 У вас недостаточно LP токенов для продажи ${percent}%.\n` +
+                `📊 Проверьте баланс LP токенов в позиции.\n\n` +
                 `📍 Токен: \`${shortAddress}\``;
             } else {
               errorMessage = `❌ **Ошибка продажи**\n\n` +

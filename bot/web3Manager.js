@@ -662,6 +662,105 @@ class Web3Manager {
     }
   }
 
+  async exitAndSellPartial(tokenAddress, percent, slippagePercent = config.DEFAULT_SLIPPAGE) {
+    if (!this.multiZapContract) {
+      throw new Error('Контракт не подключен');
+    }
+
+    if (!ethers.isAddress(tokenAddress)) {
+      throw new Error('Неверный адрес токена');
+    }
+
+    if (![5, 25, 50, 75].includes(percent)) {
+      throw new Error('Неверный процент. Доступные значения: 5, 25, 50, 75');
+    }
+
+    // Получаем информацию о токене из контракта
+    let tokenInfo;
+    try {
+      tokenInfo = await this.retryCall(() => this.multiZapContract.getTokenInfo(tokenAddress));
+    } catch (error) {
+      throw new Error(`Ошибка получения информации о токене: ${error.message}`);
+    }
+
+    if (!tokenInfo || tokenInfo.token === ethers.ZeroAddress) {
+      throw new Error('Токен не найден в контракте. Сначала добавьте токен через /addtoken');
+    }
+
+    const baseToken = tokenInfo.baseToken;
+    
+    // Проверяем, что baseToken установлен
+    if (!baseToken || baseToken === ethers.ZeroAddress) {
+      throw new Error('BASE_TOKEN_NOT_SET: Токен был добавлен до обновления контракта. Пожалуйста, удалите токен и добавьте его заново через /addtoken с указанием типа пары (WBNB или USDT).');
+    }
+
+    // Получаем баланс LP токенов
+    let lpBalance;
+    try {
+      lpBalance = await this.retryCall(() => this.multiZapContract.getLpBalance(tokenAddress));
+    } catch (error) {
+      throw new Error(`Ошибка получения баланса LP токенов: ${error.message}`);
+    }
+
+    if (lpBalance === 0n) {
+      throw new Error('Нет LP токенов для продажи');
+    }
+
+    // Вычисляем количество LP токенов для продажи
+    const lpToSell = (lpBalance * BigInt(percent)) / 100n;
+    if (lpToSell === 0n) {
+      throw new Error('Недостаточно LP токенов для продажи выбранного процента');
+    }
+
+    // Подготавливаем параметры газа
+    const gasPrice = this.networkConfig.gasPrice;
+    const gasPriceWei = typeof gasPrice === 'string' ? BigInt(gasPrice) : BigInt(gasPrice);
+    
+    const gasParams = {
+      gasLimit: 500000n,
+      gasPrice: gasPriceWei
+    };
+
+    try {
+      const tx = await this.multiZapContract.exitAndSellPartial(
+        tokenAddress,
+        percent,
+        0, // amountTokenMin - 0 для максимальной гибкости
+        0, // amountBNBMin - 0 для максимальной гибкости
+        0, // amountOutMinBNB - 0 для максимальной гибкости
+        gasParams
+      );
+      
+      // Ждем подтверждения транзакции
+      const receipt = await tx.wait();
+      
+      // Проверяем статус транзакции
+      if (receipt.status === 0) {
+        throw new Error('Транзакция была отклонена контрактом');
+      }
+      
+      return tx.hash;
+    } catch (error) {
+      // Улучшаем сообщение об ошибке
+      if (error.message.includes('user rejected') || error.message.includes('User denied')) {
+        throw new Error('Транзакция отклонена пользователем');
+      }
+      if (error.message.includes('NO_LP') || error.message.includes('NO_LP_BALANCE')) {
+        throw new Error('У вас нет LP токенов для продажи. Сначала купите токены через zap-in.');
+      }
+      if (error.message.includes('INVALID_PERCENT')) {
+        throw new Error('Неверный процент. Доступные значения: 5, 25, 50, 75');
+      }
+      if (error.message.includes('INSUFFICIENT_LP_TO_SELL')) {
+        throw new Error('Недостаточно LP токенов для продажи выбранного процента');
+      }
+      if (error.receipt && error.receipt.status === 0) {
+        throw new Error('Транзакция была отклонена. Возможные причины:\n• Недостаточно ликвидности в пуле\n• Проблема с контрактом');
+      }
+      throw new Error(`Ошибка частичной продажи: ${error.message}`);
+    }
+  }
+
   async getTokenInfo(tokenAddress) {
     if (!this.multiZapContract) {
       throw new Error('Контракт не подключен');
