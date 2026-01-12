@@ -756,13 +756,25 @@ class Web3Manager {
 
     try {
       // Убеждаемся, что percentInt - это целое число (не дробное)
-      const percentForContract = Number.isInteger(percentInt) ? percentInt : Math.floor(Number(percentInt));
-      
-      if (percentForContract !== percentInt) {
-        console.warn(`⚠️ percentInt был округлен: ${percentInt} -> ${percentForContract}`);
+      // Конвертируем в число и проверяем, что это целое число
+      const percentNumber = Number(percentInt);
+      if (!Number.isInteger(percentNumber) || percentNumber < 1 || percentNumber > 100) {
+        throw new Error(`Неверный процент для контракта: ${percentNumber} (тип: ${typeof percentNumber})`);
       }
       
-      console.log(`Вызов exitAndSellPartial с параметрами: tokenAddress=${tokenAddress}, percent=${percentForContract} (тип: ${typeof percentForContract})`);
+      // Убеждаемся, что это именно целое число, а не дробное
+      const percentForContract = Math.floor(percentNumber);
+      
+      if (percentForContract !== percentNumber) {
+        throw new Error(`Процент должен быть целым числом, получено: ${percentNumber}`);
+      }
+      
+      // Проверяем, что это одно из допустимых значений
+      if (![5, 25, 50, 75].includes(percentForContract)) {
+        throw new Error(`Неверный процент: ${percentForContract}. Доступные значения: 5, 25, 50, 75`);
+      }
+      
+      console.log(`Вызов exitAndSellPartial с параметрами: tokenAddress=${tokenAddress}, percent=${percentForContract} (тип: ${typeof percentForContract}, isInteger: ${Number.isInteger(percentForContract)})`);
       
       const tx = await this.multiZapContract.exitAndSellPartial(
         tokenAddress,
