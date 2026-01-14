@@ -90,16 +90,25 @@ class LimitOrderManager {
   cancelOrder(chatId, tokenAddress, orderId) {
     try {
       if (!this.orders[chatId] || !this.orders[chatId][tokenAddress]) {
+        console.log(`⚠️ Ордер #${orderId} не найден для отмены`);
         return false;
       }
       
       const orderIndex = this.orders[chatId][tokenAddress].findIndex(o => o.id === orderId);
       if (orderIndex === -1) {
+        console.log(`⚠️ Ордер #${orderId} не найден в списке`);
+        return false;
+      }
+      
+      const order = this.orders[chatId][tokenAddress][orderIndex];
+      if (order.status !== 'active') {
+        console.log(`⚠️ Ордер #${orderId} уже имеет статус "${order.status}", не может быть отменен`);
         return false;
       }
       
       this.orders[chatId][tokenAddress][orderIndex].status = 'cancelled';
       this.saveOrders();
+      console.log(`✅ Ордер #${orderId} успешно отменен и сохранен`);
       return true;
     } catch (error) {
       console.error('Ошибка отмены лимитного ордера:', error.message);

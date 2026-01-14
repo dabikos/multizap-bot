@@ -120,14 +120,25 @@ class LimitOrderMonitor {
         return;
       }
 
-      // Проверяем каждый ордер
+      // Проверяем каждый ордер (дополнительная проверка статуса)
       for (const order of orders) {
+        // Двойная проверка статуса - сначала проверяем в массиве, потом перезагружаем из файла
         if (order.status !== 'active') {
+          console.log(`  ⏭️ Ордер #${order.id}: статус "${order.status}", пропускаем`);
+          continue;
+        }
+        
+        // Перезагружаем ордер из файла для актуального статуса
+        const freshOrders = this.limitOrderManager.getActiveOrders(chatId, tokenAddress);
+        const freshOrder = freshOrders.find(o => o.id === order.id);
+        
+        if (!freshOrder || freshOrder.status !== 'active') {
+          console.log(`  ⏭️ Ордер #${order.id}: больше не активен (статус: ${freshOrder?.status || 'не найден'}), пропускаем`);
           continue;
         }
 
         // Обратная совместимость: если есть sellPriceUsd, используем его, иначе sellPrice (старые ордера)
-        const orderPriceUsd = order.sellPriceUsd !== undefined ? order.sellPriceUsd : (order.sellPrice || 0);
+        const orderPriceUsd = freshOrder.sellPriceUsd !== undefined ? freshOrder.sellPriceUsd : (freshOrder.sellPrice || 0);
         
         // Если цена ордера не установлена, пропускаем
         if (!orderPriceUsd || orderPriceUsd === 0) {
@@ -135,19 +146,28 @@ class LimitOrderMonitor {
           continue;
         }
         
-        console.log(`  📊 Ордер #${order.id}: продать ${order.percent}% при цене ≥ $${orderPriceUsd.toFixed(8)} (текущая: $${currentPriceUsd.toFixed(8)})`);
+        console.log(`  📊 Ордер #${order.id}: продать ${freshOrder.percent}% при цене ≥ $${orderPriceUsd.toFixed(8)} (текущая: $${currentPriceUsd.toFixed(8)})`);
 
         // Если текущая цена в USD >= цены продажи в USD, выполняем ордер
         if (currentPriceUsd >= orderPriceUsd) {
+          // Финальная проверка статуса перед выполнением
+          const finalCheck = this.limitOrderManager.getActiveOrders(chatId, tokenAddress);
+          const finalOrder = finalCheck.find(o => o.id === order.id);
+          
+          if (!finalOrder || finalOrder.status !== 'active') {
+            console.log(`  ⏭️ Ордер #${order.id}: был отменен перед выполнением, пропускаем`);
+            continue;
+          }
+          
           console.log(`🎯 ВЫПОЛНЕНИЕ лимитного ордера: токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}, цена $${currentPriceUsd.toFixed(8)} >= $${orderPriceUsd.toFixed(8)}`);
           
           try {
             // Выполняем продажу
             let txHash;
-            if (order.percent === 100) {
+            if (freshOrder.percent === 100) {
               txHash = await web3Manager.exitAndSell(tokenAddress);
             } else {
-              txHash = await web3Manager.exitAndSellPartial(tokenAddress, order.percent);
+              txHash = await web3Manager.exitAndSellPartial(tokenAddress, freshOrder.percent);
             }
 
             // Отмечаем ордер как выполненный ПЕРЕД отправкой уведомления
@@ -160,7 +180,7 @@ class LimitOrderMonitor {
             const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
             const percentText = order.percent === 100 ? 'все' : `${order.percent}%`;
 
-            const orderPriceUsd = order.sellPriceUsd !== undefined ? order.sellPriceUsd : (order.sellPrice || 0);
+            const orderPriceUsd = freshOrder.sellPriceUsd !== undefined ? freshOrder.sellPriceUsd : (freshOrder.sellPrice || 0);
             await this.telegramBot.bot.sendMessage(
               chatId,
               `✅ **Лимитный ордер выполнен!**\n\n` +
@@ -180,13 +200,13 @@ class LimitOrderMonitor {
             const networkConfig = config.getNetworkConfig(userNetwork);
             
             try {
-              const orderPriceUsd = order.sellPriceUsd !== undefined ? order.sellPriceUsd : (order.sellPrice || 0);
+              const orderPriceUsd = freshOrder.sellPriceUsd !== undefined ? freshOrder.sellPriceUsd : (freshOrder.sellPrice || 0);
               await this.telegramBot.bot.sendMessage(
                 chatId,
                 `❌ **Ошибка выполнения лимитного ордера**\n\n` +
                 `📍 Токен: \`${shortAddress}\`\n` +
                 `💰 Цена продажи: $${orderPriceUsd.toFixed(8)}\n` +
-                `📊 Процент: ${order.percent}%\n\n` +
+                `📊 Процент: ${freshOrder.percent}%\n\n` +
                 `Ошибка: ${error.message}\n\n` +
                 `💡 Ордер остается активным и будет проверен снова.`,
                 { parse_mode: 'Markdown' }
