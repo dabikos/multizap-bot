@@ -13,6 +13,9 @@ class TelegramBotManager {
     this.userManager = new UserManager();
     this.limitOrderManager = new LimitOrderManager();
     this.limitOrderMonitor = new LimitOrderMonitor(this);
+    // Временное хранилище для цены лимитного ордера, чтобы не класть длинные числа в callback_data
+    // Формат: { [chatId]: { tokenAddress, sellPrice } }
+    this.pendingLimitOrders = {};
     this.setupCommands();
     // Запускаем мониторинг лимитных ордеров
     this.limitOrderMonitor.start();
@@ -1189,6 +1192,9 @@ class TelegramBotManager {
                 return;
               }
               
+              // Сохраняем цену в памяти, чтобы не превышать лимит callback_data
+              this.pendingLimitOrders[chatId] = { tokenAddress, sellPrice };
+
               // Показываем выбор процента
               await this.bot.sendMessage(
                 chatId,
@@ -1199,13 +1205,13 @@ class TelegramBotManager {
                   reply_markup: {
                     inline_keyboard: [
                       [
-                        { text: '5%', callback_data: `limit_percent_${tokenAddress}_${sellPrice}_5` },
-                        { text: '25%', callback_data: `limit_percent_${tokenAddress}_${sellPrice}_25` },
-                        { text: '50%', callback_data: `limit_percent_${tokenAddress}_${sellPrice}_50` }
+                        { text: '5%', callback_data: `limit_percent_${tokenAddress}_5` },
+                        { text: '25%', callback_data: `limit_percent_${tokenAddress}_25` },
+                        { text: '50%', callback_data: `limit_percent_${tokenAddress}_50` }
                       ],
                       [
-                        { text: '75%', callback_data: `limit_percent_${tokenAddress}_${sellPrice}_75` },
-                        { text: '100%', callback_data: `limit_percent_${tokenAddress}_${sellPrice}_100` }
+                        { text: '75%', callback_data: `limit_percent_${tokenAddress}_75` },
+                        { text: '100%', callback_data: `limit_percent_${tokenAddress}_100` }
                       ],
                       [
                         { text: '❌ Отмена', callback_data: `select_token_${tokenAddress}` }
@@ -1226,8 +1232,15 @@ class TelegramBotManager {
         else if (data.startsWith('limit_percent_')) {
           const parts = data.replace('limit_percent_', '').split('_');
           const tokenAddress = parts[0];
-          const sellPrice = parseFloat(parts[1]);
-          const percent = parseInt(parts[2], 10);
+          const percent = parseInt(parts[1], 10);
+
+          // Берем сохраненную цену из временного хранилища
+          const pending = this.pendingLimitOrders[chatId];
+          if (!pending || pending.tokenAddress.toLowerCase() !== tokenAddress.toLowerCase()) {
+            await this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Цена не найдена, повторите установку ордера', show_alert: true });
+            return;
+          }
+          const sellPrice = pending.sellPrice;
           
           if (isNaN(sellPrice) || isNaN(percent) || percent < 1 || percent > 100) {
             await this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Неверные параметры', show_alert: true });
@@ -1241,6 +1254,8 @@ class TelegramBotManager {
           
           // Сохраняем лимитный ордер
           const order = this.limitOrderManager.addOrder(chatId, tokenAddress, sellPrice, percent);
+          // Очищаем временное хранилище
+          delete this.pendingLimitOrders[chatId];
           
           if (order) {
             await this.bot.editMessageText(
