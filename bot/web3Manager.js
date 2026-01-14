@@ -1321,7 +1321,7 @@ class Web3Manager {
       const marketCapInUsd = priceUsd * parseFloat(formattedSupply);
       
       // Получаем цену нативной валюты для отображения
-      // Если priceNative есть из DEXScreener, можем вычислить цену нативной валюты без запроса к CoinGecko
+      // Если priceNative есть из DEXScreener, вычисляем цену нативной валюты из него
       let nativePriceInUsd;
       if (priceNative && priceNative > 0 && priceUsd > 0) {
         // Вычисляем цену нативной валюты: priceUsd / priceNative
@@ -1330,7 +1330,7 @@ class Web3Manager {
         this.nativePriceCache.price = nativePriceInUsd;
         this.nativePriceCache.timestamp = Date.now();
       } else {
-        // Fallback на getNativePrice (с кэшем, не будет делать лишних запросов)
+        // Fallback на getNativePrice через DEXScreener (с кэшем)
         nativePriceInUsd = await this.getNativePrice().catch(() => {
           switch (this.currentNetwork) {
             case 'BSC': return 600;
