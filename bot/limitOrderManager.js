@@ -5,6 +5,8 @@ class LimitOrderManager {
   constructor() {
     this.ordersFile = path.join(__dirname, 'limit-orders.json');
     this.orders = this.loadOrders();
+    // Очищаем старые неактивные ордера при загрузке
+    this.cleanupOldOrders();
   }
 
   loadOrders() {
@@ -40,6 +42,64 @@ class LimitOrderManager {
       fs.writeFileSync(this.ordersFile, JSON.stringify(this.orders, null, 2), { mode: 0o666 });
     } catch (error) {
       console.error('Ошибка сохранения лимитных ордеров:', error.message);
+    }
+  }
+
+  // Очистка старых неактивных ордеров (старше 7 дней)
+  cleanupOldOrders() {
+    try {
+      const now = Date.now();
+      const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 дней в миллисекундах
+      let cleanedCount = 0;
+      let totalBefore = 0;
+      let totalAfter = 0;
+
+      for (const chatId in this.orders) {
+        for (const tokenAddress in this.orders[chatId]) {
+          const orders = this.orders[chatId][tokenAddress];
+          totalBefore += orders.length;
+          
+          // Фильтруем ордера: оставляем активные и недавние неактивные (меньше 7 дней)
+          const filteredOrders = orders.filter(order => {
+            // Всегда оставляем активные ордера
+            if (order.status === 'active') {
+              return true;
+            }
+            
+            // Для неактивных ордеров проверяем возраст
+            const orderDate = new Date(order.createdAt || order.executedAt || 0).getTime();
+            const orderAge = now - orderDate;
+            
+            // Удаляем если старше 7 дней
+            if (orderAge > maxAge) {
+              cleanedCount++;
+              return false;
+            }
+            
+            return true;
+          });
+          
+          totalAfter += filteredOrders.length;
+          this.orders[chatId][tokenAddress] = filteredOrders;
+          
+          // Удаляем пустые массивы токенов
+          if (filteredOrders.length === 0) {
+            delete this.orders[chatId][tokenAddress];
+          }
+        }
+        
+        // Удаляем пустые объекты пользователей
+        if (Object.keys(this.orders[chatId]).length === 0) {
+          delete this.orders[chatId];
+        }
+      }
+
+      if (cleanedCount > 0) {
+        console.log(`🧹 Очищено ${cleanedCount} старых неактивных ордеров (было ${totalBefore}, стало ${totalAfter})`);
+        this.saveOrders();
+      }
+    } catch (error) {
+      console.error('Ошибка очистки старых ордеров:', error.message);
     }
   }
 

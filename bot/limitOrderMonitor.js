@@ -11,6 +11,8 @@ class LimitOrderMonitor {
     this.isRunning = false;
     this.checkInterval = 30000; // 30 секунд
     this.monitoringInterval = null;
+    this.lastCleanup = Date.now();
+    this.cleanupInterval = 24 * 60 * 60 * 1000; // 24 часа
   }
 
   start() {
@@ -46,6 +48,14 @@ class LimitOrderMonitor {
 
   async checkOrders() {
     try {
+      // Периодическая очистка старых ордеров (раз в 24 часа)
+      const now = Date.now();
+      if (now - this.lastCleanup > this.cleanupInterval) {
+        console.log('🧹 Запуск периодической очистки старых ордеров...');
+        this.limitOrderManager.cleanupOldOrders();
+        this.lastCleanup = now;
+      }
+      
       const allUsers = this.userManager.getAllUsers();
       let totalOrders = 0;
       let checkedUsers = 0;
