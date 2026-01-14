@@ -187,6 +187,9 @@ class TelegramBotManager {
           { text: '🎯 Лимитный ордер', callback_data: `limit_order_${tokenAddress}` }
         ],
         [
+          { text: '📋 Мои ордера', callback_data: `list_orders_${this.getTokenShortId(chatId, tokenAddress)}` }
+        ],
+        [
           { text: '📊 Обновить', callback_data: `select_token_${tokenAddress}` },
           { text: '❌ Отмена', callback_data: 'cancel' }
         ]
