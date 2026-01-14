@@ -16,6 +16,9 @@ class TelegramBotManager {
     // Временное хранилище для цены лимитного ордера, чтобы не класть длинные числа в callback_data
     // Формат: { [chatId]: { tokenAddress, sellPrice } }
     this.pendingLimitOrders = {};
+    // Хранилище для маппинга коротких ID токенов (чтобы не класть полные адреса в callback_data)
+    // Формат: { [chatId]: { [shortId]: tokenAddress } }
+    this.tokenAddressMap = {};
     this.setupCommands();
     // Запускаем мониторинг лимитных ордеров
     this.limitOrderMonitor.start();
@@ -35,6 +38,33 @@ class TelegramBotManager {
   getExplorerUrl(chatId) {
     const userNetwork = this.userManager.getUserNetwork(chatId);
     return config.getExplorerUrl(userNetwork);
+  }
+
+  // Получить короткий ID для токена (для использования в callback_data)
+  getTokenShortId(chatId, tokenAddress) {
+    if (!this.tokenAddressMap[chatId]) {
+      this.tokenAddressMap[chatId] = {};
+    }
+    
+    // Ищем существующий ID
+    for (const [shortId, addr] of Object.entries(this.tokenAddressMap[chatId])) {
+      if (addr.toLowerCase() === tokenAddress.toLowerCase()) {
+        return shortId;
+      }
+    }
+    
+    // Создаем новый короткий ID (используем последние 8 символов адреса без 0x)
+    const shortId = tokenAddress.slice(-8).toLowerCase();
+    this.tokenAddressMap[chatId][shortId] = tokenAddress;
+    return shortId;
+  }
+
+  // Получить полный адрес токена по короткому ID
+  getTokenAddressByShortId(chatId, shortId) {
+    if (!this.tokenAddressMap[chatId]) {
+      return null;
+    }
+    return this.tokenAddressMap[chatId][shortId.toLowerCase()] || null;
   }
 
   // Обрезать сообщение до максимальной длины для Telegram (4096 символов)
@@ -1271,7 +1301,7 @@ class TelegramBotManager {
                 reply_markup: {
                   inline_keyboard: [
                     [
-                      { text: '📋 Мои ордера', callback_data: `list_orders_${tokenAddress}` },
+                      { text: '📋 Мои ордера', callback_data: `list_orders_${this.getTokenShortId(chatId, tokenAddress)}` },
                       { text: '🔙 Назад', callback_data: `select_token_${tokenAddress}` }
                     ]
                   ]
@@ -1287,7 +1317,14 @@ class TelegramBotManager {
         
         // Обработка списка ордеров
         else if (data.startsWith('list_orders_')) {
-          const tokenAddress = data.replace('list_orders_', '');
+          const shortId = data.replace('list_orders_', '');
+          const tokenAddress = this.getTokenAddressByShortId(chatId, shortId);
+          
+          if (!tokenAddress) {
+            await this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Токен не найден', show_alert: true });
+            return;
+          }
+          
           const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
           const userNetworkName = this.userManager.getUserNetwork(chatId);
           const networkConfig = config.getNetworkConfig(userNetworkName);
@@ -1321,7 +1358,7 @@ class TelegramBotManager {
               ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ ${order.sellPrice.toFixed(8)} ${nativeCurrency}\n`;
               keyboard.push([{
                 text: `❌ Отменить ордер ${index + 1}`,
-                callback_data: `cancel_order_${tokenAddress}_${order.id}`
+                callback_data: `cancel_order_${shortId}_${order.id}`
               }]);
             });
             
@@ -1348,19 +1385,20 @@ class TelegramBotManager {
         // Обработка отмены ордера
         else if (data.startsWith('cancel_order_')) {
           const parts = data.replace('cancel_order_', '').split('_');
-          const tokenAddress = parts[0];
-          const orderId = parts[1];
+          const shortId = parts[0];
+          const orderId = parts.slice(1).join('_'); // На случай если orderId содержит подчеркивания
+          const tokenAddress = this.getTokenAddressByShortId(chatId, shortId);
+          
+          if (!tokenAddress) {
+            await this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Токен не найден', show_alert: true });
+            return;
+          }
           
           const cancelled = this.limitOrderManager.cancelOrder(chatId, tokenAddress, orderId);
           
           if (cancelled) {
             await this.bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Ордер отменен' });
             // Обновляем список ордеров
-            const callbackData = `list_orders_${tokenAddress}`;
-            const fakeQuery = { ...callbackQuery, data: callbackData };
-            // Вызываем обработчик списка ордеров
-            await this.bot.answerCallbackQuery(callbackQuery.id);
-            // Обновляем сообщение через editMessageText
             const activeOrders = this.limitOrderManager.getActiveOrders(chatId, tokenAddress);
             const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
             const userNetworkName = this.userManager.getUserNetwork(chatId);
@@ -1391,10 +1429,10 @@ class TelegramBotManager {
               
               activeOrders.forEach((order, index) => {
                 ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ ${order.sellPrice.toFixed(8)} ${nativeCurrency}\n`;
-                keyboard.push([{
-                  text: `❌ Отменить ордер ${index + 1}`,
-                  callback_data: `cancel_order_${tokenAddress}_${order.id}`
-                }]);
+              keyboard.push([{
+                text: `❌ Отменить ордер ${index + 1}`,
+                callback_data: `cancel_order_${shortId}_${order.id}`
+              }]);
               });
               
               keyboard.push([{ text: '🔙 Назад', callback_data: `select_token_${tokenAddress}` }]);

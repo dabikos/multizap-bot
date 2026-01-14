@@ -47,6 +47,7 @@ class LimitOrderMonitor {
   async checkOrders() {
     try {
       const allUsers = this.userManager.getAllUsers();
+      let totalOrders = 0;
       
       for (const user of allUsers) {
         const chatId = user.telegramId;
@@ -55,6 +56,8 @@ class LimitOrderMonitor {
         if (activeOrders.length === 0) {
           continue;
         }
+        
+        totalOrders += activeOrders.length;
         
         // Группируем ордера по токенам
         const ordersByToken = {};
@@ -69,6 +72,10 @@ class LimitOrderMonitor {
         for (const tokenAddress in ordersByToken) {
           await this.checkTokenOrders(chatId, tokenAddress, ordersByToken[tokenAddress]);
         }
+      }
+      
+      if (totalOrders > 0) {
+        console.log(`🔍 Проверено ${totalOrders} активных лимитных ордеров`);
       }
     } catch (error) {
       console.error('Ошибка проверки лимитных ордеров:', error.message);
@@ -97,6 +104,7 @@ class LimitOrderMonitor {
       try {
         const tokenPrice = await web3Manager.getTokenPrice(tokenAddress);
         currentPrice = tokenPrice.price;
+        console.log(`💰 Токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}: текущая цена ${currentPrice.toFixed(8)}, проверяю ${orders.length} ордеров`);
       } catch (error) {
         console.error(`Ошибка получения цены для токена ${tokenAddress}:`, error.message);
         return;
@@ -108,9 +116,11 @@ class LimitOrderMonitor {
           continue;
         }
 
+        console.log(`  📊 Ордер #${order.id}: продать ${order.percent}% при цене ≥ ${order.sellPrice.toFixed(8)} (текущая: ${currentPrice.toFixed(8)})`);
+
         // Если текущая цена >= цены продажи, выполняем ордер
         if (currentPrice >= order.sellPrice) {
-          console.log(`🎯 Выполнение лимитного ордера: токен ${tokenAddress}, цена ${currentPrice} >= ${order.sellPrice}`);
+          console.log(`🎯 ВЫПОЛНЕНИЕ лимитного ордера: токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}, цена ${currentPrice.toFixed(8)} >= ${order.sellPrice.toFixed(8)}`);
           
           try {
             // Выполняем продажу
