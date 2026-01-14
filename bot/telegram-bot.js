@@ -1363,7 +1363,9 @@ class TelegramBotManager {
             const keyboard = [];
             
             activeOrders.forEach((order, index) => {
-              ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ $${order.sellPriceUsd.toFixed(8)}\n`;
+              // Обратная совместимость: если есть sellPriceUsd, используем его, иначе sellPrice (старые ордера)
+              const priceUsd = order.sellPriceUsd !== undefined ? order.sellPriceUsd : (order.sellPrice || 0);
+              ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ $${priceUsd.toFixed(8)}\n`;
               keyboard.push([{
                 text: `❌ Отменить ордер ${index + 1}`,
                 callback_data: `cancel_order_${shortId}_${order.id}`
@@ -1436,7 +1438,9 @@ class TelegramBotManager {
               const keyboard = [];
               
               activeOrders.forEach((order, index) => {
-                ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ $${order.sellPriceUsd.toFixed(8)}\n`;
+                // Обратная совместимость: если есть sellPriceUsd, используем его, иначе sellPrice (старые ордера)
+                const priceUsd = order.sellPriceUsd !== undefined ? order.sellPriceUsd : (order.sellPrice || 0);
+                ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ $${priceUsd.toFixed(8)}\n`;
               keyboard.push([{
                 text: `❌ Отменить ордер ${index + 1}`,
                 callback_data: `cancel_order_${shortId}_${order.id}`
