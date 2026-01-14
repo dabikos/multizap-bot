@@ -206,18 +206,43 @@ class LimitOrderManager {
   // Удаление неактивных ордеров из базы
   removeInactiveOrders(chatIdStr, tokenAddress, inactiveOrders) {
     try {
-      if (!this.orders[chatIdStr] || !this.orders[chatIdStr][tokenAddress]) {
+      if (!this.orders[chatIdStr]) {
         return;
       }
       
       const inactiveIds = new Set(inactiveOrders.map(o => o.id));
-      this.orders[chatIdStr][tokenAddress] = this.orders[chatIdStr][tokenAddress].filter(
-        order => !inactiveIds.has(order.id)
-      );
+      let removedCount = 0;
       
-      // Удаляем пустые массивы токенов
-      if (this.orders[chatIdStr][tokenAddress].length === 0) {
-        delete this.orders[chatIdStr][tokenAddress];
+      if (tokenAddress) {
+        // Удаляем из конкретного токена
+        if (this.orders[chatIdStr][tokenAddress]) {
+          const before = this.orders[chatIdStr][tokenAddress].length;
+          this.orders[chatIdStr][tokenAddress] = this.orders[chatIdStr][tokenAddress].filter(
+            order => !inactiveIds.has(order.id)
+          );
+          removedCount = before - this.orders[chatIdStr][tokenAddress].length;
+          
+          // Удаляем пустые массивы токенов
+          if (this.orders[chatIdStr][tokenAddress].length === 0) {
+            delete this.orders[chatIdStr][tokenAddress];
+          }
+        }
+      } else {
+        // Удаляем из всех токенов пользователя
+        for (const tokenAddr in this.orders[chatIdStr]) {
+          if (this.orders[chatIdStr][tokenAddr]) {
+            const before = this.orders[chatIdStr][tokenAddr].length;
+            this.orders[chatIdStr][tokenAddr] = this.orders[chatIdStr][tokenAddr].filter(
+              order => !inactiveIds.has(order.id)
+            );
+            removedCount += before - this.orders[chatIdStr][tokenAddr].length;
+            
+            // Удаляем пустые массивы токенов
+            if (this.orders[chatIdStr][tokenAddr].length === 0) {
+              delete this.orders[chatIdStr][tokenAddr];
+            }
+          }
+        }
       }
       
       // Удаляем пустые объекты пользователей
@@ -225,8 +250,10 @@ class LimitOrderManager {
         delete this.orders[chatIdStr];
       }
       
-      this.saveOrders();
-      console.log(`🧹 Удалено ${inactiveOrders.length} неактивных ордеров из базы`);
+      if (removedCount > 0) {
+        this.saveOrders();
+        console.log(`🧹 Удалено ${removedCount} неактивных ордеров из базы`);
+      }
     } catch (error) {
       console.error('Ошибка удаления неактивных ордеров:', error.message);
     }
