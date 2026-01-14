@@ -1157,6 +1157,43 @@ class Web3Manager {
     }
   }
 
+  async getNativePrice() {
+    try {
+      // Определяем ID токена для CoinGecko в зависимости от сети
+      let coinId;
+      switch (this.currentNetwork) {
+        case 'BSC':
+          coinId = 'binancecoin'; // BNB
+          break;
+        case 'BASE':
+        case 'ETH':
+          coinId = 'ethereum'; // ETH
+          break;
+        case 'MONAD':
+          coinId = 'ethereum'; // MON использует ETH как fallback
+          break;
+        default:
+          coinId = 'ethereum';
+      }
+      
+      const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
+      const data = await response.json();
+      return data[coinId].usd;
+    } catch (error) {
+      console.error(`Ошибка получения цены ${this.networkConfig.nativeCurrency}:`, error);
+      // Fallback значения
+      switch (this.currentNetwork) {
+        case 'BSC':
+          return 600; // Примерная цена BNB
+        case 'BASE':
+        case 'ETH':
+          return 3000; // Примерная цена ETH
+        default:
+          return 3000;
+      }
+    }
+  }
+
   async getTokenPrice(tokenAddress) {
     try {
       const tokenContract = new ethers.Contract(tokenAddress, [
@@ -1174,34 +1211,48 @@ class Web3Manager {
       const wethAddress = await routerContract.WETH();
       const path = [tokenAddress, wethAddress];
 
-      const [decimals, symbol, name, totalSupply, ethPriceInUsd] = await Promise.all([
+      const [decimals, symbol, name, totalSupply, nativePriceInUsd] = await Promise.all([
         this.retryCall(() => tokenContract.decimals()).catch(() => 18),
         this.retryCall(() => tokenContract.symbol()).catch(() => 'UNKNOWN'),
         this.retryCall(() => tokenContract.name()).catch(() => 'Unknown Token'),
         this.retryCall(() => tokenContract.totalSupply()).catch(() => 0n),
-        this.getEthPrice()
+        this.getNativePrice() // Используем правильную цену нативной валюты
       ]);
 
       const amountIn = ethers.parseUnits('1', decimals);
       const amounts = await this.retryCall(() => routerContract.getAmountsOut(amountIn, path)).catch(() => [0n, 0n]);
-      const priceInEth = ethers.formatEther(amounts[1]);
+      const priceInNative = ethers.formatEther(amounts[1]); // Цена в нативной валюте (BNB/ETH)
       const formattedSupply = ethers.formatUnits(totalSupply, decimals);
 
-      const priceInUsd = parseFloat(priceInEth) * ethPriceInUsd;
+      const priceInUsd = parseFloat(priceInNative) * nativePriceInUsd;
       const marketCapInUsd = priceInUsd * parseFloat(formattedSupply);
 
       return {
-        price: parseFloat(priceInEth),
+        price: parseFloat(priceInNative),
         priceUsd: priceInUsd,
         symbol,
         name,
         decimals: Number(decimals),
         totalSupply: parseFloat(formattedSupply),
         marketCap: marketCapInUsd,
-        ethPrice: ethPriceInUsd
+        nativePrice: nativePriceInUsd, // Цена нативной валюты в USD
+        ethPrice: nativePriceInUsd // Для обратной совместимости
       };
     } catch (error) {
       console.error('Ошибка получения цены токена:', error);
+      // Получаем цену нативной валюты для fallback
+      const nativePrice = await this.getNativePrice().catch(() => {
+        switch (this.currentNetwork) {
+          case 'BSC':
+            return 600;
+          case 'BASE':
+          case 'ETH':
+            return 3000;
+          default:
+            return 3000;
+        }
+      });
+      
       return {
         price: 0,
         priceUsd: 0,
@@ -1210,7 +1261,8 @@ class Web3Manager {
         decimals: 18,
         totalSupply: 0,
         marketCap: 0,
-        ethPrice: 3000
+        nativePrice: nativePrice,
+        ethPrice: nativePrice // Для обратной совместимости
       };
     }
   }

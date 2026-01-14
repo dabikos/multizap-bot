@@ -2,6 +2,8 @@ const TelegramBot = require('node-telegram-bot-api');
 const { ethers } = require('ethers');
 const Web3Manager = require('./web3Manager');
 const UserManager = require('./userManager');
+const LimitOrderManager = require('./limitOrderManager');
+const LimitOrderMonitor = require('./limitOrderMonitor');
 const config = require('./config');
 
 class TelegramBotManager {
@@ -9,7 +11,11 @@ class TelegramBotManager {
     this.bot = new TelegramBot(config.TELEGRAM_BOT_TOKEN, { polling: true });
     this.web3Manager = new Web3Manager();
     this.userManager = new UserManager();
+    this.limitOrderManager = new LimitOrderManager();
+    this.limitOrderMonitor = new LimitOrderMonitor(this);
     this.setupCommands();
+    // Запускаем мониторинг лимитных ордеров
+    this.limitOrderMonitor.start();
   }
 
   // Получить Web3Manager для конкретного пользователя с правильной сетью
@@ -61,7 +67,9 @@ class TelegramBotManager {
       tokenPrice = await web3Manager.getTokenPrice(tokenAddress);
     } catch (error) {
       console.error('Ошибка получения tokenPrice:', error.message);
-      tokenPrice = { name: 'Unknown', symbol: 'UNKNOWN', price: 0, priceUsd: 0, marketCap: 0, ethPrice: 3000 };
+      const userNetworkName = this.userManager.getUserNetwork(chatId);
+      const fallbackPrice = userNetworkName === 'BSC' ? 600 : 3000;
+      tokenPrice = { name: 'Unknown', symbol: 'UNKNOWN', price: 0, priceUsd: 0, marketCap: 0, nativePrice: fallbackPrice, ethPrice: fallbackPrice };
     }
     
     try {
@@ -102,12 +110,21 @@ class TelegramBotManager {
       `🔄 Статус: ${status}\n` +
       `💎 LP баланс: ${hasLpBalance ? '✅ ' : '⚠️ '}${lpBalance}\n` +
       `🪙 Токен баланс: ${tokenBalance}\n` +
-      `📈 ${nativeCurrency} цена: $${tokenPrice.ethPrice.toFixed(2)}\n`;
+      `📈 ${nativeCurrency} цена: $${(tokenPrice.nativePrice || tokenPrice.ethPrice || 0).toFixed(2)}\n`;
     
     // Добавляем предупреждение если нет LP баланса
     if (!hasLpBalance) {
       message += `\n⚠️ **Нет LP токенов для продажи**\n` +
         `💡 Сначала купите токены через zap-in, чтобы создать LP позицию.`;
+    }
+    
+    // Показываем активные лимитные ордера
+    const activeOrders = this.limitOrderManager.getActiveOrders(chatId, tokenAddress);
+    if (activeOrders.length > 0) {
+      message += `\n\n🎯 **Активные лимитные ордера:**\n`;
+      activeOrders.forEach((order, index) => {
+        message += `${index + 1}. Продать ${order.percent}% при цене ≥ ${order.sellPrice.toFixed(8)} ${nativeCurrency}\n`;
+      });
     }
     
     message += `\n\n💡 Выберите действие:`;
@@ -130,6 +147,9 @@ class TelegramBotManager {
         ],
         [
           { text: '💸 Продать', callback_data: `sell_partial_${tokenAddress}` }
+        ],
+        [
+          { text: '🎯 Лимитный ордер', callback_data: `limit_order_${tokenAddress}` }
         ],
         [
           { text: '📊 Обновить', callback_data: `select_token_${tokenAddress}` },
@@ -1109,6 +1129,277 @@ class TelegramBotManager {
             );
             
             this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Ошибка продажи' });
+          }
+        }
+        
+        // Обработка лимитного ордера
+        else if (data.startsWith('limit_order_')) {
+          const tokenAddress = data.replace('limit_order_', '');
+          const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+          
+          // Получаем текущую цену токена
+          const web3Manager = this.getWeb3ManagerForUser(chatId);
+          web3Manager.setPrivateKey(user.privateKey);
+          const userContract = this.userManager.getUserContract(chatId);
+          web3Manager.setContractAddress(userContract);
+          
+          let currentPrice = 0;
+          let nativeCurrency = 'ETH';
+          try {
+            const tokenPrice = await web3Manager.getTokenPrice(tokenAddress);
+            currentPrice = tokenPrice.price;
+            const userNetworkName = this.userManager.getUserNetwork(chatId);
+            const networkConfig = config.getNetworkConfig(userNetworkName);
+            nativeCurrency = networkConfig.nativeCurrency;
+          } catch (error) {
+            console.error('Ошибка получения цены для лимитного ордера:', error.message);
+          }
+          
+          // Показываем активные ордера для этого токена
+          const activeOrders = this.limitOrderManager.getActiveOrders(chatId, tokenAddress);
+          let ordersText = '';
+          if (activeOrders.length > 0) {
+            ordersText = '\n\n📋 **Активные лимитные ордера:**\n';
+            activeOrders.forEach((order, index) => {
+              ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ ${order.sellPrice.toFixed(8)} ${nativeCurrency}\n`;
+            });
+          }
+          
+          await this.bot.editMessageText(
+            `🎯 **Лимитный ордер на продажу**\n\n` +
+            `📍 Токен: \`${shortAddress}\`\n` +
+            `💰 Текущая цена: ${currentPrice.toFixed(8)} ${nativeCurrency}${ordersText}\n\n` +
+            `Введите цену продажи в ${nativeCurrency} (например: ${(currentPrice * 1.1).toFixed(8)}):`,
+            {
+              chat_id: chatId,
+              message_id: callbackQuery.message.message_id,
+              parse_mode: 'Markdown'
+            }
+          );
+          
+          // Ожидаем ввод цены
+          this.bot.once('message', async (msg) => {
+            if (msg.chat.id !== chatId) return;
+            
+            try {
+              const sellPrice = parseFloat(msg.text.trim());
+              
+              if (isNaN(sellPrice) || sellPrice <= 0) {
+                this.bot.sendMessage(chatId, '❌ Неверная цена. Попробуйте еще раз.');
+                return;
+              }
+              
+              // Показываем выбор процента
+              await this.bot.sendMessage(
+                chatId,
+                `✅ Цена продажи: ${sellPrice.toFixed(8)} ${nativeCurrency}\n\n` +
+                `Выберите процент для продажи:`,
+                {
+                  parse_mode: 'Markdown',
+                  reply_markup: {
+                    inline_keyboard: [
+                      [
+                        { text: '5%', callback_data: `limit_percent_${tokenAddress}_${sellPrice}_5` },
+                        { text: '25%', callback_data: `limit_percent_${tokenAddress}_${sellPrice}_25` },
+                        { text: '50%', callback_data: `limit_percent_${tokenAddress}_${sellPrice}_50` }
+                      ],
+                      [
+                        { text: '75%', callback_data: `limit_percent_${tokenAddress}_${sellPrice}_75` },
+                        { text: '100%', callback_data: `limit_percent_${tokenAddress}_${sellPrice}_100` }
+                      ],
+                      [
+                        { text: '❌ Отмена', callback_data: `select_token_${tokenAddress}` }
+                      ]
+                    ]
+                  }
+                }
+              );
+            } catch (error) {
+              this.bot.sendMessage(chatId, `❌ Ошибка: ${error.message}`);
+            }
+          });
+          
+          this.bot.answerCallbackQuery(callbackQuery.id, { text: 'Введите цену продажи' });
+        }
+        
+        // Обработка выбора процента для лимитного ордера
+        else if (data.startsWith('limit_percent_')) {
+          const parts = data.replace('limit_percent_', '').split('_');
+          const tokenAddress = parts[0];
+          const sellPrice = parseFloat(parts[1]);
+          const percent = parseInt(parts[2], 10);
+          
+          if (isNaN(sellPrice) || isNaN(percent) || percent < 1 || percent > 100) {
+            await this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Неверные параметры', show_alert: true });
+            return;
+          }
+          
+          const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+          const userNetworkName = this.userManager.getUserNetwork(chatId);
+          const networkConfig = config.getNetworkConfig(userNetworkName);
+          const nativeCurrency = networkConfig.nativeCurrency;
+          
+          // Сохраняем лимитный ордер
+          const order = this.limitOrderManager.addOrder(chatId, tokenAddress, sellPrice, percent);
+          
+          if (order) {
+            await this.bot.editMessageText(
+              `✅ **Лимитный ордер создан!**\n\n` +
+              `📍 Токен: \`${shortAddress}\`\n` +
+              `💰 Цена продажи: ${sellPrice.toFixed(8)} ${nativeCurrency}\n` +
+              `📊 Процент: ${percent}%\n\n` +
+              `💡 Ордер будет выполнен автоматически, когда цена достигнет ${sellPrice.toFixed(8)} ${nativeCurrency} или выше.`,
+              {
+                chat_id: chatId,
+                message_id: callbackQuery.message.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  inline_keyboard: [
+                    [
+                      { text: '📋 Мои ордера', callback_data: `list_orders_${tokenAddress}` },
+                      { text: '🔙 Назад', callback_data: `select_token_${tokenAddress}` }
+                    ]
+                  ]
+                }
+              }
+            );
+            
+            this.bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Ордер создан' });
+          } else {
+            await this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Ошибка создания ордера', show_alert: true });
+          }
+        }
+        
+        // Обработка списка ордеров
+        else if (data.startsWith('list_orders_')) {
+          const tokenAddress = data.replace('list_orders_', '');
+          const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+          const userNetworkName = this.userManager.getUserNetwork(chatId);
+          const networkConfig = config.getNetworkConfig(userNetworkName);
+          const nativeCurrency = networkConfig.nativeCurrency;
+          
+          const activeOrders = this.limitOrderManager.getActiveOrders(chatId, tokenAddress);
+          
+          if (activeOrders.length === 0) {
+            await this.bot.editMessageText(
+              `📋 **Лимитные ордера**\n\n` +
+              `📍 Токен: \`${shortAddress}\`\n\n` +
+              `Нет активных ордеров.`,
+              {
+                chat_id: chatId,
+                message_id: callbackQuery.message.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  inline_keyboard: [
+                    [
+                      { text: '🔙 Назад', callback_data: `select_token_${tokenAddress}` }
+                    ]
+                  ]
+                }
+              }
+            );
+          } else {
+            let ordersText = '';
+            const keyboard = [];
+            
+            activeOrders.forEach((order, index) => {
+              ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ ${order.sellPrice.toFixed(8)} ${nativeCurrency}\n`;
+              keyboard.push([{
+                text: `❌ Отменить ордер ${index + 1}`,
+                callback_data: `cancel_order_${tokenAddress}_${order.id}`
+              }]);
+            });
+            
+            keyboard.push([{ text: '🔙 Назад', callback_data: `select_token_${tokenAddress}` }]);
+            
+            await this.bot.editMessageText(
+              `📋 **Лимитные ордера**\n\n` +
+              `📍 Токен: \`${shortAddress}\`\n\n` +
+              ordersText,
+              {
+                chat_id: chatId,
+                message_id: callbackQuery.message.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  inline_keyboard: keyboard
+                }
+              }
+            );
+          }
+          
+          this.bot.answerCallbackQuery(callbackQuery.id);
+        }
+        
+        // Обработка отмены ордера
+        else if (data.startsWith('cancel_order_')) {
+          const parts = data.replace('cancel_order_', '').split('_');
+          const tokenAddress = parts[0];
+          const orderId = parts[1];
+          
+          const cancelled = this.limitOrderManager.cancelOrder(chatId, tokenAddress, orderId);
+          
+          if (cancelled) {
+            await this.bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Ордер отменен' });
+            // Обновляем список ордеров
+            const callbackData = `list_orders_${tokenAddress}`;
+            const fakeQuery = { ...callbackQuery, data: callbackData };
+            // Вызываем обработчик списка ордеров
+            await this.bot.answerCallbackQuery(callbackQuery.id);
+            // Обновляем сообщение через editMessageText
+            const activeOrders = this.limitOrderManager.getActiveOrders(chatId, tokenAddress);
+            const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+            const userNetworkName = this.userManager.getUserNetwork(chatId);
+            const networkConfig = config.getNetworkConfig(userNetworkName);
+            const nativeCurrency = networkConfig.nativeCurrency;
+            
+            if (activeOrders.length === 0) {
+              await this.bot.editMessageText(
+                `📋 **Лимитные ордера**\n\n` +
+                `📍 Токен: \`${shortAddress}\`\n\n` +
+                `Нет активных ордеров.`,
+                {
+                  chat_id: chatId,
+                  message_id: callbackQuery.message.message_id,
+                  parse_mode: 'Markdown',
+                  reply_markup: {
+                    inline_keyboard: [
+                      [
+                        { text: '🔙 Назад', callback_data: `select_token_${tokenAddress}` }
+                      ]
+                    ]
+                  }
+                }
+              );
+            } else {
+              let ordersText = '';
+              const keyboard = [];
+              
+              activeOrders.forEach((order, index) => {
+                ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ ${order.sellPrice.toFixed(8)} ${nativeCurrency}\n`;
+                keyboard.push([{
+                  text: `❌ Отменить ордер ${index + 1}`,
+                  callback_data: `cancel_order_${tokenAddress}_${order.id}`
+                }]);
+              });
+              
+              keyboard.push([{ text: '🔙 Назад', callback_data: `select_token_${tokenAddress}` }]);
+              
+              await this.bot.editMessageText(
+                `📋 **Лимитные ордера**\n\n` +
+                `📍 Токен: \`${shortAddress}\`\n\n` +
+                ordersText,
+                {
+                  chat_id: chatId,
+                  message_id: callbackQuery.message.message_id,
+                  parse_mode: 'Markdown',
+                  reply_markup: {
+                    inline_keyboard: keyboard
+                  }
+                }
+              );
+            }
+          } else {
+            await this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Ошибка отмены ордера', show_alert: true });
           }
         }
         
