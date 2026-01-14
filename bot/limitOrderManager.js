@@ -53,11 +53,17 @@ class LimitOrderManager {
       let cleanedCount = 0;
       let totalBefore = 0;
       let totalAfter = 0;
+      let activeOrdersCount = 0;
+      let removedActiveCount = 0;
 
       for (const chatId in this.orders) {
         for (const tokenAddress in this.orders[chatId]) {
           const orders = this.orders[chatId][tokenAddress];
           totalBefore += orders.length;
+          
+          // Считаем активные ордера до фильтрации
+          const activeBefore = orders.filter(o => o.status === 'active').length;
+          activeOrdersCount += activeBefore;
           
           // Фильтруем ордера: оставляем активные и недавние неактивные (меньше 7 дней)
           const filteredOrders = orders.filter(order => {
@@ -73,11 +79,19 @@ class LimitOrderManager {
             // Удаляем если старше 7 дней
             if (orderAge > maxAge) {
               cleanedCount++;
+              console.log(`  🗑️ Удаление ордера #${order.id}: статус "${order.status}", возраст ${Math.floor(orderAge / (24 * 60 * 60 * 1000))} дней`);
               return false;
             }
             
             return true;
           });
+          
+          // Проверяем что активные ордера не были удалены
+          const activeAfter = filteredOrders.filter(o => o.status === 'active').length;
+          if (activeBefore > activeAfter) {
+            removedActiveCount += (activeBefore - activeAfter);
+            console.error(`❌ КРИТИЧЕСКАЯ ОШИБКА: Удалены активные ордера! Было ${activeBefore}, стало ${activeAfter} для токена ${tokenAddress.slice(0, 6)}...`);
+          }
           
           totalAfter += filteredOrders.length;
           this.orders[chatId][tokenAddress] = filteredOrders;
@@ -95,11 +109,17 @@ class LimitOrderManager {
       }
 
       if (cleanedCount > 0) {
-        console.log(`🧹 Очищено ${cleanedCount} старых неактивных ордеров (было ${totalBefore}, стало ${totalAfter})`);
+        console.log(`🧹 Очищено ${cleanedCount} старых неактивных ордеров (было ${totalBefore}, стало ${totalAfter}, активных: ${activeOrdersCount})`);
+        if (removedActiveCount > 0) {
+          console.error(`❌ ВНИМАНИЕ: Было удалено ${removedActiveCount} активных ордеров! Это ошибка!`);
+        }
         this.saveOrders();
+      } else if (totalBefore > 0) {
+        console.log(`ℹ️ Очистка: ${totalBefore} ордеров проверено, ${activeOrdersCount} активных, удалять нечего`);
       }
     } catch (error) {
       console.error('Ошибка очистки старых ордеров:', error.message);
+      console.error('Детали ошибки:', error);
     }
   }
 
@@ -160,12 +180,36 @@ class LimitOrderManager {
     // Убеждаемся что chatId - строка (Telegram ID может быть строкой или числом)
     const chatIdStr = String(chatId);
     const orders = this.getOrders(chatIdStr, tokenAddress);
-    const activeOrders = orders.filter(order => order.status === 'active');
+    
+    // Детальное логирование для диагностики
+    if (orders.length > 0) {
+      const statusCounts = {};
+      orders.forEach(order => {
+        statusCounts[order.status] = (statusCounts[order.status] || 0) + 1;
+      });
+      const statusStr = Object.entries(statusCounts).map(([status, count]) => `${status}:${count}`).join(', ');
+      console.log(`🔍 getActiveOrders: пользователь ${chatIdStr}, токен ${tokenAddress ? tokenAddress.slice(0, 6) + '...' : 'все'}, всего ${orders.length} ордеров [${statusStr}]`);
+    }
+    
+    const activeOrders = orders.filter(order => {
+      const isActive = order.status === 'active';
+      if (!isActive && orders.length > 0) {
+        console.log(`  ⚠️ Ордер #${order.id} не активен: статус "${order.status}"`);
+      }
+      return isActive;
+    });
     
     // Логируем если есть неактивные ордера для диагностики
     if (orders.length > 0 && activeOrders.length !== orders.length) {
       const inactiveCount = orders.length - activeOrders.length;
       console.log(`📊 Пользователь ${chatIdStr}: ${activeOrders.length} активных из ${orders.length} ордеров (${inactiveCount} неактивных)`);
+    }
+    
+    if (activeOrders.length === 0 && orders.length > 0) {
+      console.log(`⚠️ ВНИМАНИЕ: У пользователя ${chatIdStr} есть ${orders.length} ордеров, но ни один не активен!`);
+      orders.forEach(order => {
+        console.log(`  📋 Ордер #${order.id}: статус "${order.status}", создан ${order.createdAt || 'неизвестно'}`);
+      });
     }
     
     return activeOrders;

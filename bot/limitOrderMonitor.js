@@ -67,13 +67,20 @@ class LimitOrderMonitor {
         
         // Получаем все ордера пользователя (не только активные) для диагностики
         const allUserOrders = this.limitOrderManager.getOrders(chatId);
+        console.log(`👤 Пользователь ${chatId}: проверка ордеров...`);
+        
+        // Получаем активные ордера (это вызовет детальное логирование внутри)
         const activeOrders = this.limitOrderManager.getActiveOrders(chatId);
         
         if (allUserOrders.length > 0) {
           console.log(`👤 Пользователь ${chatId}: всего ордеров ${allUserOrders.length}, активных ${activeOrders.length}`);
-          allUserOrders.forEach(order => {
-            console.log(`  📋 Ордер #${order.id}: статус "${order.status}", токен ${order.tokenAddress.slice(0, 6)}...${order.tokenAddress.slice(-4)}`);
-          });
+          if (allUserOrders.length > 0 && activeOrders.length === 0) {
+            // Детально показываем все ордера если нет активных
+            allUserOrders.forEach(order => {
+              const age = order.createdAt ? Math.floor((Date.now() - new Date(order.createdAt).getTime()) / (24 * 60 * 60 * 1000)) : '?';
+              console.log(`  📋 Ордер #${order.id}: статус "${order.status}", токен ${order.tokenAddress.slice(0, 6)}...${order.tokenAddress.slice(-4)}, возраст ${age} дней`);
+            });
+          }
         }
         
         if (activeOrders.length === 0) {
