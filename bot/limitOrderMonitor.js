@@ -48,15 +48,29 @@ class LimitOrderMonitor {
     try {
       const allUsers = this.userManager.getAllUsers();
       let totalOrders = 0;
+      let checkedUsers = 0;
+      
+      console.log(`🔍 Начало проверки лимитных ордеров. Пользователей: ${allUsers.length}`);
       
       for (const user of allUsers) {
         const chatId = user.telegramId;
+        
+        // Получаем все ордера пользователя (не только активные) для диагностики
+        const allUserOrders = this.limitOrderManager.getOrders(chatId);
         const activeOrders = this.limitOrderManager.getActiveOrders(chatId);
+        
+        if (allUserOrders.length > 0) {
+          console.log(`👤 Пользователь ${chatId}: всего ордеров ${allUserOrders.length}, активных ${activeOrders.length}`);
+          allUserOrders.forEach(order => {
+            console.log(`  📋 Ордер #${order.id}: статус "${order.status}", токен ${order.tokenAddress.slice(0, 6)}...${order.tokenAddress.slice(-4)}`);
+          });
+        }
         
         if (activeOrders.length === 0) {
           continue;
         }
         
+        checkedUsers++;
         totalOrders += activeOrders.length;
         
         // Группируем ордера по токенам
@@ -80,10 +94,13 @@ class LimitOrderMonitor {
       }
       
       if (totalOrders > 0) {
-        console.log(`🔍 Проверено ${totalOrders} активных лимитных ордеров`);
+        console.log(`🔍 Проверено ${totalOrders} активных лимитных ордеров у ${checkedUsers} пользователей`);
+      } else {
+        console.log(`ℹ️ Активных лимитных ордеров не найдено`);
       }
     } catch (error) {
-      console.error('Ошибка проверки лимитных ордеров:', error.message);
+      console.error('❌ Критическая ошибка проверки лимитных ордеров:', error.message);
+      console.error('Детали ошибки:', error);
     }
   }
 

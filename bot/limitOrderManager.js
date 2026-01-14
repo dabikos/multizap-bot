@@ -11,7 +11,14 @@ class LimitOrderManager {
     try {
       if (fs.existsSync(this.ordersFile)) {
         const data = fs.readFileSync(this.ordersFile, 'utf8');
-        return JSON.parse(data);
+        const orders = JSON.parse(data);
+        const totalOrders = Object.values(orders).reduce((sum, userOrders) => {
+          return sum + Object.values(userOrders).reduce((userSum, tokenOrders) => userSum + tokenOrders.length, 0);
+        }, 0);
+        console.log(`📂 Загружено ${totalOrders} лимитных ордеров из файла`);
+        return orders;
+      } else {
+        console.log(`ℹ️ Файл лимитных ордеров не существует: ${this.ordersFile}`);
       }
     } catch (error) {
       console.error('Ошибка загрузки лимитных ордеров:', error.message);
@@ -38,12 +45,15 @@ class LimitOrderManager {
 
   addOrder(chatId, tokenAddress, sellPriceUsd, percent) {
     try {
-      if (!this.orders[chatId]) {
-        this.orders[chatId] = {};
+      // Убеждаемся что chatId - строка
+      const chatIdStr = String(chatId);
+      
+      if (!this.orders[chatIdStr]) {
+        this.orders[chatIdStr] = {};
       }
       
-      if (!this.orders[chatId][tokenAddress]) {
-        this.orders[chatId][tokenAddress] = [];
+      if (!this.orders[chatIdStr][tokenAddress]) {
+        this.orders[chatIdStr][tokenAddress] = [];
       }
       
       const order = {
@@ -56,8 +66,9 @@ class LimitOrderManager {
         executedAt: null
       };
       
-      this.orders[chatId][tokenAddress].push(order);
+      this.orders[chatIdStr][tokenAddress].push(order);
       this.saveOrders();
+      console.log(`✅ Лимитный ордер #${order.id} добавлен: токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}, цена $${sellPriceUsd}, ${percent}%`);
       return order;
     } catch (error) {
       console.error('Ошибка добавления лимитного ордера:', error.message);
@@ -66,49 +77,65 @@ class LimitOrderManager {
   }
 
   getOrders(chatId, tokenAddress = null) {
-    if (!this.orders[chatId]) {
+    // Убеждаемся что chatId - строка
+    const chatIdStr = String(chatId);
+    
+    if (!this.orders[chatIdStr]) {
       return [];
     }
     
     if (tokenAddress) {
-      return this.orders[chatId][tokenAddress] || [];
+      return this.orders[chatIdStr][tokenAddress] || [];
     }
     
     // Возвращаем все ордера пользователя
     const allOrders = [];
-    for (const tokenAddr in this.orders[chatId]) {
-      allOrders.push(...(this.orders[chatId][tokenAddr] || []));
+    for (const tokenAddr in this.orders[chatIdStr]) {
+      allOrders.push(...(this.orders[chatIdStr][tokenAddr] || []));
     }
     return allOrders;
   }
 
   getActiveOrders(chatId, tokenAddress = null) {
-    const orders = this.getOrders(chatId, tokenAddress);
-    return orders.filter(order => order.status === 'active');
+    // Убеждаемся что chatId - строка (Telegram ID может быть строкой или числом)
+    const chatIdStr = String(chatId);
+    const orders = this.getOrders(chatIdStr, tokenAddress);
+    const activeOrders = orders.filter(order => order.status === 'active');
+    
+    // Логируем если есть неактивные ордера для диагностики
+    if (orders.length > 0 && activeOrders.length !== orders.length) {
+      const inactiveCount = orders.length - activeOrders.length;
+      console.log(`📊 Пользователь ${chatIdStr}: ${activeOrders.length} активных из ${orders.length} ордеров (${inactiveCount} неактивных)`);
+    }
+    
+    return activeOrders;
   }
 
   cancelOrder(chatId, tokenAddress, orderId) {
     try {
-      if (!this.orders[chatId] || !this.orders[chatId][tokenAddress]) {
-        console.log(`⚠️ Ордер #${orderId} не найден для отмены`);
+      // Убеждаемся что chatId - строка
+      const chatIdStr = String(chatId);
+      
+      if (!this.orders[chatIdStr] || !this.orders[chatIdStr][tokenAddress]) {
+        console.log(`⚠️ Ордер #${orderId} не найден для отмены (пользователь ${chatIdStr}, токен ${tokenAddress.slice(0, 6)}...)`);
         return false;
       }
       
-      const orderIndex = this.orders[chatId][tokenAddress].findIndex(o => o.id === orderId);
+      const orderIndex = this.orders[chatIdStr][tokenAddress].findIndex(o => o.id === orderId);
       if (orderIndex === -1) {
         console.log(`⚠️ Ордер #${orderId} не найден в списке`);
         return false;
       }
       
-      const order = this.orders[chatId][tokenAddress][orderIndex];
+      const order = this.orders[chatIdStr][tokenAddress][orderIndex];
       if (order.status !== 'active') {
         console.log(`⚠️ Ордер #${orderId} уже имеет статус "${order.status}", не может быть отменен`);
         return false;
       }
       
-      this.orders[chatId][tokenAddress][orderIndex].status = 'cancelled';
+      this.orders[chatIdStr][tokenAddress][orderIndex].status = 'cancelled';
       this.saveOrders();
-      console.log(`✅ Ордер #${orderId} успешно отменен и сохранен`);
+      console.log(`✅ Ордер #${orderId} успешно отменен и сохранен (пользователь ${chatIdStr})`);
       return true;
     } catch (error) {
       console.error('Ошибка отмены лимитного ордера:', error.message);
@@ -118,18 +145,24 @@ class LimitOrderManager {
 
   markOrderExecuted(chatId, tokenAddress, orderId) {
     try {
-      if (!this.orders[chatId] || !this.orders[chatId][tokenAddress]) {
+      // Убеждаемся что chatId - строка
+      const chatIdStr = String(chatId);
+      
+      if (!this.orders[chatIdStr] || !this.orders[chatIdStr][tokenAddress]) {
+        console.log(`⚠️ Ордер #${orderId} не найден для отметки как выполненный`);
         return false;
       }
       
-      const orderIndex = this.orders[chatId][tokenAddress].findIndex(o => o.id === orderId);
+      const orderIndex = this.orders[chatIdStr][tokenAddress].findIndex(o => o.id === orderId);
       if (orderIndex === -1) {
+        console.log(`⚠️ Ордер #${orderId} не найден в списке для отметки`);
         return false;
       }
       
-      this.orders[chatId][tokenAddress][orderIndex].status = 'executed';
-      this.orders[chatId][tokenAddress][orderIndex].executedAt = new Date().toISOString();
+      this.orders[chatIdStr][tokenAddress][orderIndex].status = 'executed';
+      this.orders[chatIdStr][tokenAddress][orderIndex].executedAt = new Date().toISOString();
       this.saveOrders();
+      console.log(`✅ Ордер #${orderId} помечен как выполненный и сохранен`);
       return true;
     } catch (error) {
       console.error('Ошибка отметки ордера как выполненного:', error.message);
