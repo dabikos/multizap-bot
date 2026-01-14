@@ -99,12 +99,12 @@ class LimitOrderMonitor {
       web3Manager.setPrivateKey(user.privateKey);
       web3Manager.setContractAddress(userContract);
 
-      // Получаем текущую цену токена
-      let currentPrice;
+      // Получаем текущую цену токена в USD
+      let currentPriceUsd;
       try {
         const tokenPrice = await web3Manager.getTokenPrice(tokenAddress);
-        currentPrice = tokenPrice.price;
-        console.log(`💰 Токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}: текущая цена ${currentPrice.toFixed(8)}, проверяю ${orders.length} ордеров`);
+        currentPriceUsd = tokenPrice.priceUsd;
+        console.log(`💰 Токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}: текущая цена $${currentPriceUsd.toFixed(8)}, проверяю ${orders.length} ордеров`);
       } catch (error) {
         console.error(`Ошибка получения цены для токена ${tokenAddress}:`, error.message);
         return;
@@ -116,11 +116,11 @@ class LimitOrderMonitor {
           continue;
         }
 
-        console.log(`  📊 Ордер #${order.id}: продать ${order.percent}% при цене ≥ ${order.sellPrice.toFixed(8)} (текущая: ${currentPrice.toFixed(8)})`);
+        console.log(`  📊 Ордер #${order.id}: продать ${order.percent}% при цене ≥ $${order.sellPriceUsd.toFixed(8)} (текущая: $${currentPriceUsd.toFixed(8)})`);
 
-        // Если текущая цена >= цены продажи, выполняем ордер
-        if (currentPrice >= order.sellPrice) {
-          console.log(`🎯 ВЫПОЛНЕНИЕ лимитного ордера: токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}, цена ${currentPrice.toFixed(8)} >= ${order.sellPrice.toFixed(8)}`);
+        // Если текущая цена в USD >= цены продажи в USD, выполняем ордер
+        if (currentPriceUsd >= order.sellPriceUsd) {
+          console.log(`🎯 ВЫПОЛНЕНИЕ лимитного ордера: токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}, цена $${currentPriceUsd.toFixed(8)} >= $${order.sellPriceUsd.toFixed(8)}`);
           
           try {
             // Выполняем продажу
@@ -144,7 +144,7 @@ class LimitOrderMonitor {
               chatId,
               `✅ **Лимитный ордер выполнен!**\n\n` +
               `📍 Токен: \`${shortAddress}\`\n` +
-              `💰 Цена продажи: ${order.sellPrice.toFixed(8)} ${networkConfig.nativeCurrency}\n` +
+              `💰 Цена продажи: $${order.sellPriceUsd.toFixed(8)}\n` +
               `📊 Продано: ${percentText} LP токенов\n` +
               `🔗 Транзакция: ${explorerUrl}/tx/${txHash}`,
               { parse_mode: 'Markdown' }
@@ -163,7 +163,7 @@ class LimitOrderMonitor {
                 chatId,
                 `❌ **Ошибка выполнения лимитного ордера**\n\n` +
                 `📍 Токен: \`${shortAddress}\`\n` +
-                `💰 Цена продажи: ${order.sellPrice.toFixed(8)} ${nativeCurrency}\n` +
+                `💰 Цена продажи: $${order.sellPriceUsd.toFixed(8)}\n` +
                 `📊 Процент: ${order.percent}%\n\n` +
                 `Ошибка: ${error.message}\n\n` +
                 `💡 Ордер остается активным и будет проверен снова.`,

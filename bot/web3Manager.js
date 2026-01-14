@@ -1194,7 +1194,109 @@ class Web3Manager {
     }
   }
 
+  async getTokenPriceFromDexScreener(tokenAddress) {
+    try {
+      // Маппинг chainId для DEXScreener
+      const chainIdMap = {
+        'ETH': 'ethereum',
+        'BSC': 'bsc',
+        'BASE': 'base',
+        'MONAD': 'monad'
+      };
+      
+      const chainId = chainIdMap[this.currentNetwork] || 'bsc';
+      const url = `https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`;
+      
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`DEXScreener API returned status ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (!data.pairs || data.pairs.length === 0) {
+        throw new Error('No pairs found for token');
+      }
+      
+      // Находим пару с наибольшей ликвидностью для текущей сети
+      const pairsForNetwork = data.pairs.filter(pair => {
+        const pairChainId = pair.chainId?.toLowerCase();
+        return pairChainId === chainId || 
+               (chainId === 'bsc' && pairChainId === 'binance') ||
+               (chainId === 'ethereum' && pairChainId === 'eth');
+      });
+      
+      if (pairsForNetwork.length === 0) {
+        throw new Error('No pair found for current network');
+      }
+      
+      // Сортируем по ликвидности
+      const bestPair = pairsForNetwork.sort((a, b) => {
+        const liquidityA = parseFloat(a.liquidity?.usd || 0);
+        const liquidityB = parseFloat(b.liquidity?.usd || 0);
+        return liquidityB - liquidityA;
+      })[0];
+      
+      const priceUsd = parseFloat(bestPair.priceUsd || 0);
+      const priceNative = parseFloat(bestPair.priceNative || 0);
+      
+      if (!priceUsd || priceUsd === 0) {
+        throw new Error('Invalid price from DEXScreener');
+      }
+      
+      // Получаем базовую информацию о токене из блокчейна
+      const tokenContract = new ethers.Contract(tokenAddress, [
+        'function decimals() view returns (uint8)',
+        'function symbol() view returns (string)',
+        'function name() view returns (string)',
+        'function totalSupply() view returns (uint256)'
+      ], this.provider);
+      
+      const [decimals, symbol, name, totalSupply] = await Promise.all([
+        this.retryCall(() => tokenContract.decimals()).catch(() => 18),
+        this.retryCall(() => tokenContract.symbol()).catch(() => bestPair.baseToken?.symbol || 'UNKNOWN'),
+        this.retryCall(() => tokenContract.name()).catch(() => bestPair.baseToken?.name || 'Unknown Token'),
+        this.retryCall(() => tokenContract.totalSupply()).catch(() => 0n)
+      ]);
+      
+      const formattedSupply = ethers.formatUnits(totalSupply, decimals);
+      const marketCapInUsd = priceUsd * parseFloat(formattedSupply);
+      
+      // Получаем цену нативной валюты для отображения
+      const nativePriceInUsd = await this.getNativePrice().catch(() => {
+        switch (this.currentNetwork) {
+          case 'BSC': return 600;
+          case 'BASE':
+          case 'ETH': return 3000;
+          default: return 3000;
+        }
+      });
+      
+      return {
+        price: priceNative || (priceUsd / nativePriceInUsd), // Цена в нативной валюте
+        priceUsd: priceUsd,
+        symbol,
+        name,
+        decimals: Number(decimals),
+        totalSupply: parseFloat(formattedSupply),
+        marketCap: marketCapInUsd,
+        nativePrice: nativePriceInUsd,
+        ethPrice: nativePriceInUsd
+      };
+    } catch (error) {
+      console.error('Ошибка получения цены через DEXScreener:', error.message);
+      return null;
+    }
+  }
+
   async getTokenPrice(tokenAddress) {
+    // Сначала пробуем DEXScreener (быстрее, без rate limit)
+    const dexscreenerPrice = await this.getTokenPriceFromDexScreener(tokenAddress);
+    if (dexscreenerPrice) {
+      return dexscreenerPrice;
+    }
+    
+    // Fallback на старый метод через блокчейн
     try {
       const tokenContract = new ethers.Contract(tokenAddress, [
         'function decimals() view returns (uint8)',

@@ -36,7 +36,7 @@ class LimitOrderManager {
     }
   }
 
-  addOrder(chatId, tokenAddress, sellPrice, percent) {
+  addOrder(chatId, tokenAddress, sellPriceUsd, percent) {
     try {
       if (!this.orders[chatId]) {
         this.orders[chatId] = {};
@@ -49,7 +49,7 @@ class LimitOrderManager {
       const order = {
         id: Date.now().toString(),
         tokenAddress: tokenAddress,
-        sellPrice: parseFloat(sellPrice),
+        sellPriceUsd: parseFloat(sellPriceUsd), // Цена в USD
         percent: parseInt(percent),
         status: 'active', // active, executed, cancelled
         createdAt: new Date().toISOString(),
@@ -154,4 +154,5 @@ class LimitOrderManager {
 }
 
 module.exports = LimitOrderManager;
+
 

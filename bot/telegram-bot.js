@@ -156,7 +156,7 @@ class TelegramBotManager {
     if (activeOrders.length > 0) {
       message += `\n\n🎯 **Активные лимитные ордера:**\n`;
       activeOrders.forEach((order, index) => {
-        message += `${index + 1}. Продать ${order.percent}% при цене ≥ ${order.sellPrice.toFixed(8)} ${nativeCurrency}\n`;
+        message += `${index + 1}. Продать ${order.percent}% при цене ≥ $${order.sellPriceUsd.toFixed(8)}\n`;
       });
     }
     
@@ -1176,11 +1176,13 @@ class TelegramBotManager {
           const userContract = this.userManager.getUserContract(chatId);
           web3Manager.setContractAddress(userContract);
           
-          let currentPrice = 0;
+          let currentPriceUsd = 0;
+          let currentPriceNative = 0;
           let nativeCurrency = 'ETH';
           try {
             const tokenPrice = await web3Manager.getTokenPrice(tokenAddress);
-            currentPrice = tokenPrice.price;
+            currentPriceUsd = tokenPrice.priceUsd;
+            currentPriceNative = tokenPrice.price;
             const userNetworkName = this.userManager.getUserNetwork(chatId);
             const networkConfig = config.getNetworkConfig(userNetworkName);
             nativeCurrency = networkConfig.nativeCurrency;
@@ -1194,15 +1196,15 @@ class TelegramBotManager {
           if (activeOrders.length > 0) {
             ordersText = '\n\n📋 **Активные лимитные ордера:**\n';
             activeOrders.forEach((order, index) => {
-              ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ ${order.sellPrice.toFixed(8)} ${nativeCurrency}\n`;
+              ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ $${order.sellPriceUsd.toFixed(8)}\n`;
             });
           }
           
           await this.bot.editMessageText(
             `🎯 **Лимитный ордер на продажу**\n\n` +
             `📍 Токен: \`${shortAddress}\`\n` +
-            `💰 Текущая цена: ${currentPrice.toFixed(8)} ${nativeCurrency}${ordersText}\n\n` +
-            `Введите цену продажи в ${nativeCurrency} (например: ${(currentPrice * 1.1).toFixed(8)}):`,
+            `💰 Текущая цена: $${currentPriceUsd.toFixed(8)} (${currentPriceNative.toFixed(8)} ${nativeCurrency})${ordersText}\n\n` +
+            `Введите цену продажи в USD (например: $${(currentPriceUsd * 1.1).toFixed(8)}):`,
             {
               chat_id: chatId,
               message_id: callbackQuery.message.message_id,
@@ -1215,20 +1217,22 @@ class TelegramBotManager {
             if (msg.chat.id !== chatId) return;
             
             try {
-              const sellPrice = parseFloat(msg.text.trim());
+              // Убираем символ $ если есть
+              const priceText = msg.text.trim().replace(/^\$/, '');
+              const sellPriceUsd = parseFloat(priceText);
               
-              if (isNaN(sellPrice) || sellPrice <= 0) {
-                this.bot.sendMessage(chatId, '❌ Неверная цена. Попробуйте еще раз.');
+              if (isNaN(sellPriceUsd) || sellPriceUsd <= 0) {
+                this.bot.sendMessage(chatId, '❌ Неверная цена. Введите число в USD (например: 0.0001 или $0.0001).');
                 return;
               }
               
-              // Сохраняем цену в памяти, чтобы не превышать лимит callback_data
-              this.pendingLimitOrders[chatId] = { tokenAddress, sellPrice };
+              // Сохраняем цену в USD в памяти, чтобы не превышать лимит callback_data
+              this.pendingLimitOrders[chatId] = { tokenAddress, sellPriceUsd };
 
               // Показываем выбор процента
               await this.bot.sendMessage(
                 chatId,
-                `✅ Цена продажи: ${sellPrice.toFixed(8)} ${nativeCurrency}\n\n` +
+                `✅ Цена продажи: $${sellPriceUsd.toFixed(8)}\n\n` +
                 `Выберите процент для продажи:`,
                 {
                   parse_mode: 'Markdown',
@@ -1270,9 +1274,9 @@ class TelegramBotManager {
             await this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Цена не найдена, повторите установку ордера', show_alert: true });
             return;
           }
-          const sellPrice = pending.sellPrice;
+          const sellPriceUsd = pending.sellPriceUsd;
           
-          if (isNaN(sellPrice) || isNaN(percent) || percent < 1 || percent > 100) {
+          if (isNaN(sellPriceUsd) || isNaN(percent) || percent < 1 || percent > 100) {
             await this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Неверные параметры', show_alert: true });
             return;
           }
@@ -1282,8 +1286,8 @@ class TelegramBotManager {
           const networkConfig = config.getNetworkConfig(userNetworkName);
           const nativeCurrency = networkConfig.nativeCurrency;
           
-          // Сохраняем лимитный ордер
-          const order = this.limitOrderManager.addOrder(chatId, tokenAddress, sellPrice, percent);
+          // Сохраняем лимитный ордер (цена в USD)
+          const order = this.limitOrderManager.addOrder(chatId, tokenAddress, sellPriceUsd, percent);
           // Очищаем временное хранилище
           delete this.pendingLimitOrders[chatId];
           
@@ -1291,9 +1295,9 @@ class TelegramBotManager {
             await this.bot.editMessageText(
               `✅ **Лимитный ордер создан!**\n\n` +
               `📍 Токен: \`${shortAddress}\`\n` +
-              `💰 Цена продажи: ${sellPrice.toFixed(8)} ${nativeCurrency}\n` +
+              `💰 Цена продажи: $${sellPriceUsd.toFixed(8)}\n` +
               `📊 Процент: ${percent}%\n\n` +
-              `💡 Ордер будет выполнен автоматически, когда цена достигнет ${sellPrice.toFixed(8)} ${nativeCurrency} или выше.`,
+              `💡 Ордер будет выполнен автоматически, когда цена достигнет $${sellPriceUsd.toFixed(8)} или выше.`,
               {
                 chat_id: chatId,
                 message_id: callbackQuery.message.message_id,
@@ -1355,7 +1359,7 @@ class TelegramBotManager {
             const keyboard = [];
             
             activeOrders.forEach((order, index) => {
-              ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ ${order.sellPrice.toFixed(8)} ${nativeCurrency}\n`;
+              ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ $${order.sellPriceUsd.toFixed(8)}\n`;
               keyboard.push([{
                 text: `❌ Отменить ордер ${index + 1}`,
                 callback_data: `cancel_order_${shortId}_${order.id}`
@@ -1428,7 +1432,7 @@ class TelegramBotManager {
               const keyboard = [];
               
               activeOrders.forEach((order, index) => {
-                ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ ${order.sellPrice.toFixed(8)} ${nativeCurrency}\n`;
+                ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ $${order.sellPriceUsd.toFixed(8)}\n`;
               keyboard.push([{
                 text: `❌ Отменить ордер ${index + 1}`,
                 callback_data: `cancel_order_${shortId}_${order.id}`
