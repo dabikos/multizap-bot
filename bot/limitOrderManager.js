@@ -127,13 +127,16 @@ class LimitOrderManager {
     try {
       // Убеждаемся что chatId - строка
       const chatIdStr = String(chatId);
+      console.log(`➕ addOrder вызван: chatId=${chatId} (тип: ${typeof chatId}), chatIdStr="${chatIdStr}", токен ${tokenAddress.slice(0, 6)}...`);
       
       if (!this.orders[chatIdStr]) {
         this.orders[chatIdStr] = {};
+        console.log(`  📁 Создан новый объект для пользователя ${chatIdStr}`);
       }
       
       if (!this.orders[chatIdStr][tokenAddress]) {
         this.orders[chatIdStr][tokenAddress] = [];
+        console.log(`  📁 Создан новый массив для токена ${tokenAddress.slice(0, 6)}...`);
       }
       
       const order = {
@@ -147,11 +150,19 @@ class LimitOrderManager {
       };
       
       this.orders[chatIdStr][tokenAddress].push(order);
+      console.log(`  💾 Ордер добавлен в память. Всего ордеров для токена: ${this.orders[chatIdStr][tokenAddress].length}`);
+      
       this.saveOrders();
-      console.log(`✅ Лимитный ордер #${order.id} добавлен: токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}, цена $${sellPriceUsd}, ${percent}%`);
+      console.log(`✅ Лимитный ордер #${order.id} добавлен и сохранен: токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}, цена $${sellPriceUsd}, ${percent}%`);
+      
+      // Проверяем что ордер действительно сохранен
+      const verifyOrders = this.getOrders(chatIdStr, tokenAddress);
+      console.log(`  🔍 Проверка: найдено ${verifyOrders.length} ордеров для токена после сохранения`);
+      
       return order;
     } catch (error) {
       console.error('Ошибка добавления лимитного ордера:', error.message);
+      console.error('Детали ошибки:', error);
       return null;
     }
   }
@@ -179,7 +190,17 @@ class LimitOrderManager {
   getActiveOrders(chatId, tokenAddress = null) {
     // Убеждаемся что chatId - строка (Telegram ID может быть строкой или числом)
     const chatIdStr = String(chatId);
+    console.log(`🔍 getActiveOrders вызван: chatId=${chatId} (тип: ${typeof chatId}), chatIdStr="${chatIdStr}", токен ${tokenAddress ? tokenAddress.slice(0, 6) + '...' : 'все'}`);
+    
+    // Проверяем что пользователь существует в базе
+    if (!this.orders[chatIdStr]) {
+      console.log(`  ⚠️ Пользователь ${chatIdStr} не найден в базе ордеров`);
+      console.log(`  📋 Доступные пользователи: ${Object.keys(this.orders).join(', ')}`);
+      return [];
+    }
+    
     const orders = this.getOrders(chatIdStr, tokenAddress);
+    console.log(`  📦 getOrders вернул ${orders.length} ордеров для пользователя ${chatIdStr}`);
     
     // Фильтруем только активные ордера (теперь в базе должны быть только активные)
     const activeOrders = orders.filter(order => order.status === 'active');
@@ -195,9 +216,17 @@ class LimitOrderManager {
       this.removeInactiveOrders(chatIdStr, tokenAddress, inactiveOrders);
     }
     
-    // Логируем только если есть активные ордера
+    // Логируем результат
     if (activeOrders.length > 0) {
-      console.log(`📊 Пользователь ${chatIdStr}: ${activeOrders.length} активных ордеров`);
+      console.log(`📊 Пользователь ${chatIdStr}: ${activeOrders.length} активных ордеров из ${orders.length} всего`);
+      activeOrders.forEach(order => {
+        console.log(`  ✅ Активный ордер #${order.id}: токен ${order.tokenAddress.slice(0, 6)}..., цена $${order.sellPriceUsd}, ${order.percent}%`);
+      });
+    } else {
+      console.log(`  ℹ️ Активных ордеров не найдено для пользователя ${chatIdStr}`);
+      if (orders.length > 0) {
+        console.log(`  ⚠️ Но есть ${orders.length} неактивных ордеров`);
+      }
     }
     
     return activeOrders;
