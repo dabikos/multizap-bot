@@ -181,38 +181,55 @@ class LimitOrderManager {
     const chatIdStr = String(chatId);
     const orders = this.getOrders(chatIdStr, tokenAddress);
     
-    // Детальное логирование для диагностики
-    if (orders.length > 0) {
-      const statusCounts = {};
-      orders.forEach(order => {
-        statusCounts[order.status] = (statusCounts[order.status] || 0) + 1;
+    // Фильтруем только активные ордера (теперь в базе должны быть только активные)
+    const activeOrders = orders.filter(order => order.status === 'active');
+    
+    // Если нашли неактивные ордера - это ошибка, они должны были быть удалены
+    const inactiveOrders = orders.filter(order => order.status !== 'active');
+    if (inactiveOrders.length > 0) {
+      console.error(`❌ ОШИБКА: Найдены неактивные ордера в базе! Они должны были быть удалены.`);
+      inactiveOrders.forEach(order => {
+        console.error(`  🗑️ Неактивный ордер #${order.id}: статус "${order.status}" - будет удален`);
       });
-      const statusStr = Object.entries(statusCounts).map(([status, count]) => `${status}:${count}`).join(', ');
-      console.log(`🔍 getActiveOrders: пользователь ${chatIdStr}, токен ${tokenAddress ? tokenAddress.slice(0, 6) + '...' : 'все'}, всего ${orders.length} ордеров [${statusStr}]`);
+      // Удаляем неактивные ордера автоматически
+      this.removeInactiveOrders(chatIdStr, tokenAddress, inactiveOrders);
     }
     
-    const activeOrders = orders.filter(order => {
-      const isActive = order.status === 'active';
-      if (!isActive && orders.length > 0) {
-        console.log(`  ⚠️ Ордер #${order.id} не активен: статус "${order.status}"`);
-      }
-      return isActive;
-    });
-    
-    // Логируем если есть неактивные ордера для диагностики
-    if (orders.length > 0 && activeOrders.length !== orders.length) {
-      const inactiveCount = orders.length - activeOrders.length;
-      console.log(`📊 Пользователь ${chatIdStr}: ${activeOrders.length} активных из ${orders.length} ордеров (${inactiveCount} неактивных)`);
-    }
-    
-    if (activeOrders.length === 0 && orders.length > 0) {
-      console.log(`⚠️ ВНИМАНИЕ: У пользователя ${chatIdStr} есть ${orders.length} ордеров, но ни один не активен!`);
-      orders.forEach(order => {
-        console.log(`  📋 Ордер #${order.id}: статус "${order.status}", создан ${order.createdAt || 'неизвестно'}`);
-      });
+    // Логируем только если есть активные ордера
+    if (activeOrders.length > 0) {
+      console.log(`📊 Пользователь ${chatIdStr}: ${activeOrders.length} активных ордеров`);
     }
     
     return activeOrders;
+  }
+
+  // Удаление неактивных ордеров из базы
+  removeInactiveOrders(chatIdStr, tokenAddress, inactiveOrders) {
+    try {
+      if (!this.orders[chatIdStr] || !this.orders[chatIdStr][tokenAddress]) {
+        return;
+      }
+      
+      const inactiveIds = new Set(inactiveOrders.map(o => o.id));
+      this.orders[chatIdStr][tokenAddress] = this.orders[chatIdStr][tokenAddress].filter(
+        order => !inactiveIds.has(order.id)
+      );
+      
+      // Удаляем пустые массивы токенов
+      if (this.orders[chatIdStr][tokenAddress].length === 0) {
+        delete this.orders[chatIdStr][tokenAddress];
+      }
+      
+      // Удаляем пустые объекты пользователей
+      if (Object.keys(this.orders[chatIdStr]).length === 0) {
+        delete this.orders[chatIdStr];
+      }
+      
+      this.saveOrders();
+      console.log(`🧹 Удалено ${inactiveOrders.length} неактивных ордеров из базы`);
+    } catch (error) {
+      console.error('Ошибка удаления неактивных ордеров:', error.message);
+    }
   }
 
   cancelOrder(chatId, tokenAddress, orderId) {
@@ -237,9 +254,21 @@ class LimitOrderManager {
         return false;
       }
       
-      this.orders[chatIdStr][tokenAddress][orderIndex].status = 'cancelled';
+      // Удаляем ордер полностью из базы вместо изменения статуса
+      this.orders[chatIdStr][tokenAddress].splice(orderIndex, 1);
+      
+      // Удаляем пустые массивы токенов
+      if (this.orders[chatIdStr][tokenAddress].length === 0) {
+        delete this.orders[chatIdStr][tokenAddress];
+      }
+      
+      // Удаляем пустые объекты пользователей
+      if (Object.keys(this.orders[chatIdStr]).length === 0) {
+        delete this.orders[chatIdStr];
+      }
+      
       this.saveOrders();
-      console.log(`✅ Ордер #${orderId} успешно отменен и сохранен (пользователь ${chatIdStr})`);
+      console.log(`✅ Ордер #${orderId} успешно удален из базы (пользователь ${chatIdStr})`);
       return true;
     } catch (error) {
       console.error('Ошибка отмены лимитного ордера:', error.message);
