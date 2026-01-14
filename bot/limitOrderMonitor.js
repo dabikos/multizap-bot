@@ -116,11 +116,20 @@ class LimitOrderMonitor {
           continue;
         }
 
-        console.log(`  📊 Ордер #${order.id}: продать ${order.percent}% при цене ≥ $${order.sellPriceUsd.toFixed(8)} (текущая: $${currentPriceUsd.toFixed(8)})`);
+        // Обратная совместимость: если есть sellPriceUsd, используем его, иначе sellPrice (старые ордера)
+        const orderPriceUsd = order.sellPriceUsd !== undefined ? order.sellPriceUsd : (order.sellPrice || 0);
+        
+        // Если цена ордера не установлена, пропускаем
+        if (!orderPriceUsd || orderPriceUsd === 0) {
+          console.log(`  ⚠️ Ордер #${order.id}: цена не установлена, пропускаем`);
+          continue;
+        }
+        
+        console.log(`  📊 Ордер #${order.id}: продать ${order.percent}% при цене ≥ $${orderPriceUsd.toFixed(8)} (текущая: $${currentPriceUsd.toFixed(8)})`);
 
         // Если текущая цена в USD >= цены продажи в USD, выполняем ордер
-        if (currentPriceUsd >= order.sellPriceUsd) {
-          console.log(`🎯 ВЫПОЛНЕНИЕ лимитного ордера: токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}, цена $${currentPriceUsd.toFixed(8)} >= $${order.sellPriceUsd.toFixed(8)}`);
+        if (currentPriceUsd >= orderPriceUsd) {
+          console.log(`🎯 ВЫПОЛНЕНИЕ лимитного ордера: токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}, цена $${currentPriceUsd.toFixed(8)} >= $${orderPriceUsd.toFixed(8)}`);
           
           try {
             // Выполняем продажу
@@ -140,11 +149,12 @@ class LimitOrderMonitor {
             const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
             const percentText = order.percent === 100 ? 'все' : `${order.percent}%`;
 
+            const orderPriceUsd = order.sellPriceUsd !== undefined ? order.sellPriceUsd : (order.sellPrice || 0);
             await this.telegramBot.bot.sendMessage(
               chatId,
               `✅ **Лимитный ордер выполнен!**\n\n` +
               `📍 Токен: \`${shortAddress}\`\n` +
-              `💰 Цена продажи: $${order.sellPriceUsd.toFixed(8)}\n` +
+              `💰 Цена продажи: $${orderPriceUsd.toFixed(8)}\n` +
               `📊 Продано: ${percentText} LP токенов\n` +
               `🔗 Транзакция: ${explorerUrl}/tx/${txHash}`,
               { parse_mode: 'Markdown' }
@@ -159,11 +169,12 @@ class LimitOrderMonitor {
             const nativeCurrency = networkConfig.nativeCurrency;
             
             try {
+              const orderPriceUsd = order.sellPriceUsd !== undefined ? order.sellPriceUsd : (order.sellPrice || 0);
               await this.telegramBot.bot.sendMessage(
                 chatId,
                 `❌ **Ошибка выполнения лимитного ордера**\n\n` +
                 `📍 Токен: \`${shortAddress}\`\n` +
-                `💰 Цена продажи: $${order.sellPriceUsd.toFixed(8)}\n` +
+                `💰 Цена продажи: $${orderPriceUsd.toFixed(8)}\n` +
                 `📊 Процент: ${order.percent}%\n\n` +
                 `Ошибка: ${error.message}\n\n` +
                 `💡 Ордер остается активным и будет проверен снова.`,

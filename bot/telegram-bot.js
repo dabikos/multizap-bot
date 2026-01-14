@@ -156,7 +156,9 @@ class TelegramBotManager {
     if (activeOrders.length > 0) {
       message += `\n\n🎯 **Активные лимитные ордера:**\n`;
       activeOrders.forEach((order, index) => {
-        message += `${index + 1}. Продать ${order.percent}% при цене ≥ $${order.sellPriceUsd.toFixed(8)}\n`;
+        // Обратная совместимость: если есть sellPriceUsd, используем его, иначе sellPrice (старые ордера)
+        const priceUsd = order.sellPriceUsd !== undefined ? order.sellPriceUsd : (order.sellPrice || 0);
+        message += `${index + 1}. Продать ${order.percent}% при цене ≥ $${priceUsd.toFixed(8)}\n`;
       });
     }
     
@@ -1196,7 +1198,9 @@ class TelegramBotManager {
           if (activeOrders.length > 0) {
             ordersText = '\n\n📋 **Активные лимитные ордера:**\n';
             activeOrders.forEach((order, index) => {
-              ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ $${order.sellPriceUsd.toFixed(8)}\n`;
+              // Обратная совместимость: если есть sellPriceUsd, используем его, иначе sellPrice (старые ордера)
+              const priceUsd = order.sellPriceUsd !== undefined ? order.sellPriceUsd : (order.sellPrice || 0);
+              ordersText += `${index + 1}. Продать ${order.percent}% при цене ≥ $${priceUsd.toFixed(8)}\n`;
             });
           }
           
