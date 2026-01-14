@@ -1171,59 +1171,67 @@ class Web3Manager {
     }
     
     try {
-      // Определяем ID токена для CoinGecko в зависимости от сети
-      let coinId;
-      switch (this.currentNetwork) {
-        case 'BSC':
-          coinId = 'binancecoin'; // BNB
-          break;
-        case 'BASE':
-        case 'ETH':
-          coinId = 'ethereum'; // ETH
-          break;
-        case 'MONAD':
-          coinId = 'ethereum'; // MON использует ETH как fallback
-          break;
-        default:
-          coinId = 'ethereum';
-      }
+      // Получаем адрес WBNB/WETH для текущей сети
+      const routerContract = new ethers.Contract(this.networkConfig.routerAddress, [
+        'function WETH() external pure returns (address)'
+      ], this.provider);
       
-      // Добавляем задержку между запросами (минимум 2 секунды)
-      const timeSinceLastFetch = now - this.nativePriceCache.timestamp;
-      if (timeSinceLastFetch < 2000) {
-        await new Promise(resolve => setTimeout(resolve, 2000 - timeSinceLastFetch));
-      }
+      const wethAddress = await this.retryCall(() => routerContract.WETH());
       
-      const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
+      // Получаем цену нативной валюты через DEXScreener
+      const chainIdMap = {
+        'ETH': 'ethereum',
+        'BSC': 'bsc',
+        'BASE': 'base',
+        'MONAD': 'monad'
+      };
       
+      const chainId = chainIdMap[this.currentNetwork] || 'bsc';
+      const url = `https://api.dexscreener.com/latest/dex/tokens/${wethAddress}`;
+      
+      const response = await fetch(url);
       if (!response.ok) {
-        // Если rate limit (429), используем кэш если есть, иначе fallback
-        if (response.status === 429) {
-          console.warn('CoinGecko API rate limit (429), используем кэш или fallback');
-          if (this.nativePriceCache.price) {
-            return this.nativePriceCache.price;
-          }
-          throw new Error(`CoinGecko API returned status ${response.status}`);
-        }
-        throw new Error(`CoinGecko API returned status ${response.status}`);
+        throw new Error(`DEXScreener API returned status ${response.status}`);
       }
       
       const data = await response.json();
       
-      // Проверяем, что данные есть и в правильном формате
-      if (!data || !data[coinId] || typeof data[coinId].usd !== 'number') {
-        throw new Error(`Invalid response format from CoinGecko API`);
+      if (!data.pairs || data.pairs.length === 0) {
+        throw new Error('No pairs found for native currency');
       }
       
-      const price = data[coinId].usd;
+      // Находим пару с наибольшей ликвидностью для текущей сети
+      const pairsForNetwork = data.pairs.filter(pair => {
+        const pairChainId = pair.chainId?.toLowerCase();
+        return pairChainId === chainId || 
+               (chainId === 'bsc' && pairChainId === 'binance') ||
+               (chainId === 'ethereum' && pairChainId === 'eth');
+      });
+      
+      if (pairsForNetwork.length === 0) {
+        throw new Error('No pair found for current network');
+      }
+      
+      // Сортируем по ликвидности
+      const bestPair = pairsForNetwork.sort((a, b) => {
+        const liquidityA = parseFloat(a.liquidity?.usd || 0);
+        const liquidityB = parseFloat(b.liquidity?.usd || 0);
+        return liquidityB - liquidityA;
+      })[0];
+      
+      const priceUsd = parseFloat(bestPair.priceUsd || 0);
+      
+      if (!priceUsd || priceUsd === 0) {
+        throw new Error('Invalid price from DEXScreener');
+      }
       
       // Сохраняем в кэш
-      this.nativePriceCache.price = price;
+      this.nativePriceCache.price = priceUsd;
       this.nativePriceCache.timestamp = Date.now();
       
-      return price;
+      return priceUsd;
     } catch (error) {
-      console.error(`Ошибка получения цены ${this.networkConfig.nativeCurrency}:`, error);
+      console.error(`Ошибка получения цены ${this.networkConfig.nativeCurrency} через DEXScreener:`, error);
       
       // Если есть кэш, используем его даже если он старый
       if (this.nativePriceCache.price) {
