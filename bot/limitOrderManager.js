@@ -17,13 +17,26 @@ class LimitOrderManager {
         const totalOrders = Object.values(orders).reduce((sum, userOrders) => {
           return sum + Object.values(userOrders).reduce((userSum, tokenOrders) => userSum + tokenOrders.length, 0);
         }, 0);
-        console.log(`📂 Загружено ${totalOrders} лимитных ордеров из файла`);
+        const usersList = Object.keys(orders).join(', ');
+        console.log(`📂 loadOrders: загружено ${totalOrders} лимитных ордеров из файла для пользователей [${usersList}]`);
+        
+        // Детальное логирование для каждого пользователя
+        for (const chatId in orders) {
+          const userOrders = orders[chatId];
+          let userTotal = 0;
+          for (const tokenAddr in userOrders) {
+            userTotal += userOrders[tokenAddr].length;
+          }
+          console.log(`  👤 Пользователь ${chatId}: ${userTotal} ордеров`);
+        }
+        
         return orders;
       } else {
         console.log(`ℹ️ Файл лимитных ордеров не существует: ${this.ordersFile}`);
       }
     } catch (error) {
       console.error('Ошибка загрузки лимитных ордеров:', error.message);
+      console.error('Детали ошибки:', error);
     }
     return {};
   }
@@ -39,9 +52,32 @@ class LimitOrderManager {
         fs.writeFileSync(this.ordersFile, '{}');
       }
       
+      // Подсчитываем ордера перед сохранением
+      const totalOrders = Object.values(this.orders).reduce((sum, userOrders) => {
+        return sum + Object.values(userOrders).reduce((userSum, tokenOrders) => userSum + tokenOrders.length, 0);
+      }, 0);
+      
+      const usersList = Object.keys(this.orders).join(', ');
+      console.log(`💾 saveOrders: сохраняю ${totalOrders} ордеров для пользователей [${usersList}]`);
+      
       fs.writeFileSync(this.ordersFile, JSON.stringify(this.orders, null, 2), { mode: 0o666 });
+      
+      // Проверяем что файл действительно сохранился
+      if (fs.existsSync(this.ordersFile)) {
+        const fileData = fs.readFileSync(this.ordersFile, 'utf8');
+        const savedOrders = JSON.parse(fileData);
+        const savedTotal = Object.values(savedOrders).reduce((sum, userOrders) => {
+          return sum + Object.values(userOrders).reduce((userSum, tokenOrders) => userSum + tokenOrders.length, 0);
+        }, 0);
+        console.log(`✅ saveOrders: файл сохранен, проверка - в файле ${savedTotal} ордеров`);
+        
+        if (savedTotal !== totalOrders) {
+          console.error(`❌ ОШИБКА: Несоответствие! В памяти ${totalOrders}, в файле ${savedTotal}`);
+        }
+      }
     } catch (error) {
       console.error('Ошибка сохранения лимитных ордеров:', error.message);
+      console.error('Детали ошибки:', error);
     }
   }
 
