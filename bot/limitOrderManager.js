@@ -172,18 +172,24 @@ class LimitOrderManager {
     const chatIdStr = String(chatId);
     
     if (!this.orders[chatIdStr]) {
+      console.log(`  ⚠️ getOrders: пользователь ${chatIdStr} не найден в this.orders`);
       return [];
     }
     
     if (tokenAddress) {
-      return this.orders[chatIdStr][tokenAddress] || [];
+      const tokenOrders = this.orders[chatIdStr][tokenAddress] || [];
+      console.log(`  📦 getOrders: для токена ${tokenAddress.slice(0, 6)}... найдено ${tokenOrders.length} ордеров`);
+      return tokenOrders;
     }
     
     // Возвращаем все ордера пользователя
     const allOrders = [];
     for (const tokenAddr in this.orders[chatIdStr]) {
-      allOrders.push(...(this.orders[chatIdStr][tokenAddr] || []));
+      const tokenOrders = this.orders[chatIdStr][tokenAddr] || [];
+      allOrders.push(...tokenOrders);
+      console.log(`  📦 getOrders: для токена ${tokenAddr.slice(0, 6)}... найдено ${tokenOrders.length} ордеров`);
     }
+    console.log(`  📦 getOrders: всего найдено ${allOrders.length} ордеров для пользователя ${chatIdStr}`);
     return allOrders;
   }
 
