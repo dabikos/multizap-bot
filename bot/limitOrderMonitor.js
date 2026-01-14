@@ -103,10 +103,15 @@ class LimitOrderMonitor {
       let currentPriceUsd;
       try {
         const tokenPrice = await web3Manager.getTokenPrice(tokenAddress);
+        if (!tokenPrice || !tokenPrice.priceUsd || tokenPrice.priceUsd === 0) {
+          console.error(`⚠️ Не удалось получить валидную цену для токена ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`);
+          return;
+        }
         currentPriceUsd = tokenPrice.priceUsd;
         console.log(`💰 Токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}: текущая цена $${currentPriceUsd.toFixed(8)}, проверяю ${orders.length} ордеров`);
       } catch (error) {
-        console.error(`Ошибка получения цены для токена ${tokenAddress}:`, error.message);
+        console.error(`❌ Ошибка получения цены для токена ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}:`, error.message);
+        // Не останавливаем проверку других токенов, просто пропускаем этот
         return;
       }
 
@@ -140,8 +145,9 @@ class LimitOrderMonitor {
               txHash = await web3Manager.exitAndSellPartial(tokenAddress, order.percent);
             }
 
-            // Отмечаем ордер как выполненный
+            // Отмечаем ордер как выполненный ПЕРЕД отправкой уведомления
             this.limitOrderManager.markOrderExecuted(chatId, tokenAddress, order.id);
+            console.log(`✅ Ордер #${order.id} помечен как выполненный`);
 
             // Отправляем уведомление пользователю
             const networkConfig = config.getNetworkConfig(userNetwork);
@@ -160,13 +166,13 @@ class LimitOrderMonitor {
               { parse_mode: 'Markdown' }
             );
           } catch (error) {
-            console.error(`Ошибка выполнения лимитного ордера:`, error.message);
+            console.error(`❌ Ошибка выполнения лимитного ордера #${order.id}:`, error.message);
+            console.error(`Детали ошибки:`, error);
             
             // Отправляем уведомление об ошибке
             const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
             const userNetwork = this.userManager.getUserNetwork(chatId);
             const networkConfig = config.getNetworkConfig(userNetwork);
-            const nativeCurrency = networkConfig.nativeCurrency;
             
             try {
               const orderPriceUsd = order.sellPriceUsd !== undefined ? order.sellPriceUsd : (order.sellPrice || 0);
@@ -183,11 +189,15 @@ class LimitOrderMonitor {
             } catch (sendError) {
               console.error('Ошибка отправки уведомления об ошибке:', sendError.message);
             }
+            
+            // Продолжаем проверку других ордеров, не останавливаемся на ошибке
+            continue;
           }
         }
       }
     } catch (error) {
-      console.error(`Ошибка проверки ордеров для токена ${tokenAddress}:`, error.message);
+      console.error(`❌ Критическая ошибка проверки ордеров для токена ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}:`, error.message);
+      // Не пробрасываем ошибку дальше, чтобы не останавливать проверку других токенов
     }
   }
 }
