@@ -68,9 +68,14 @@ class LimitOrderMonitor {
           ordersByToken[order.tokenAddress].push(order);
         }
         
-        // Проверяем каждый токен
+        // Проверяем каждый токен (не останавливаемся на ошибках)
         for (const tokenAddress in ordersByToken) {
-          await this.checkTokenOrders(chatId, tokenAddress, ordersByToken[tokenAddress]);
+          try {
+            await this.checkTokenOrders(chatId, tokenAddress, ordersByToken[tokenAddress]);
+          } catch (error) {
+            console.error(`❌ Ошибка проверки токена ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}:`, error.message);
+            // Продолжаем проверку других токенов
+          }
         }
       }
       
