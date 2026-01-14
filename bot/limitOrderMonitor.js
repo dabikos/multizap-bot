@@ -4,8 +4,9 @@ const UserManager = require('./userManager');
 const config = require('./config');
 
 class LimitOrderMonitor {
-  constructor(telegramBot) {
-    this.limitOrderManager = new LimitOrderManager();
+  constructor(telegramBot, limitOrderManager = null) {
+    // Используем переданный экземпляр или создаем новый
+    this.limitOrderManager = limitOrderManager || new LimitOrderManager();
     this.userManager = new UserManager();
     this.telegramBot = telegramBot;
     this.isRunning = false;

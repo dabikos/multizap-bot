@@ -12,7 +12,8 @@ class TelegramBotManager {
     this.web3Manager = new Web3Manager();
     this.userManager = new UserManager();
     this.limitOrderManager = new LimitOrderManager();
-    this.limitOrderMonitor = new LimitOrderMonitor(this);
+    // Передаем тот же экземпляр LimitOrderManager в мониторинг, чтобы использовать одну память
+    this.limitOrderMonitor = new LimitOrderMonitor(this, this.limitOrderManager);
     // Временное хранилище для цены лимитного ордера, чтобы не класть длинные числа в callback_data
     // Формат: { [chatId]: { tokenAddress, sellPrice } }
     this.pendingLimitOrders = {};
