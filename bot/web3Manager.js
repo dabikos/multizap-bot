@@ -12,6 +12,12 @@ class Web3Manager {
     this.multiZapContract = null;
     this.abi = null;
     this.bytecode = null;
+    // Кэш для цены нативной валюты (храним 10 минут)
+    this.nativePriceCache = {
+      price: null,
+      timestamp: 0,
+      ttl: 10 * 60 * 1000 // 10 минут
+    };
     this.loadABI();
   }
 
@@ -1158,6 +1164,12 @@ class Web3Manager {
   }
 
   async getNativePrice() {
+    // Проверяем кэш
+    const now = Date.now();
+    if (this.nativePriceCache.price && (now - this.nativePriceCache.timestamp) < this.nativePriceCache.ttl) {
+      return this.nativePriceCache.price;
+    }
+    
     try {
       // Определяем ID токена для CoinGecko в зависимости от сети
       let coinId;
@@ -1176,9 +1188,23 @@ class Web3Manager {
           coinId = 'ethereum';
       }
       
+      // Добавляем задержку между запросами (минимум 2 секунды)
+      const timeSinceLastFetch = now - this.nativePriceCache.timestamp;
+      if (timeSinceLastFetch < 2000) {
+        await new Promise(resolve => setTimeout(resolve, 2000 - timeSinceLastFetch));
+      }
+      
       const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
       
       if (!response.ok) {
+        // Если rate limit (429), используем кэш если есть, иначе fallback
+        if (response.status === 429) {
+          console.warn('CoinGecko API rate limit (429), используем кэш или fallback');
+          if (this.nativePriceCache.price) {
+            return this.nativePriceCache.price;
+          }
+          throw new Error(`CoinGecko API returned status ${response.status}`);
+        }
         throw new Error(`CoinGecko API returned status ${response.status}`);
       }
       
@@ -1189,9 +1215,22 @@ class Web3Manager {
         throw new Error(`Invalid response format from CoinGecko API`);
       }
       
-      return data[coinId].usd;
+      const price = data[coinId].usd;
+      
+      // Сохраняем в кэш
+      this.nativePriceCache.price = price;
+      this.nativePriceCache.timestamp = Date.now();
+      
+      return price;
     } catch (error) {
       console.error(`Ошибка получения цены ${this.networkConfig.nativeCurrency}:`, error);
+      
+      // Если есть кэш, используем его даже если он старый
+      if (this.nativePriceCache.price) {
+        console.log(`Используем кэшированную цену ${this.networkConfig.nativeCurrency}: ${this.nativePriceCache.price}`);
+        return this.nativePriceCache.price;
+      }
+      
       // Fallback значения
       switch (this.currentNetwork) {
         case 'BSC':
@@ -1274,14 +1313,25 @@ class Web3Manager {
       const marketCapInUsd = priceUsd * parseFloat(formattedSupply);
       
       // Получаем цену нативной валюты для отображения
-      const nativePriceInUsd = await this.getNativePrice().catch(() => {
-        switch (this.currentNetwork) {
-          case 'BSC': return 600;
-          case 'BASE':
-          case 'ETH': return 3000;
-          default: return 3000;
-        }
-      });
+      // Если priceNative есть из DEXScreener, можем вычислить цену нативной валюты без запроса к CoinGecko
+      let nativePriceInUsd;
+      if (priceNative && priceNative > 0 && priceUsd > 0) {
+        // Вычисляем цену нативной валюты: priceUsd / priceNative
+        nativePriceInUsd = priceUsd / priceNative;
+        // Обновляем кэш
+        this.nativePriceCache.price = nativePriceInUsd;
+        this.nativePriceCache.timestamp = Date.now();
+      } else {
+        // Fallback на getNativePrice (с кэшем, не будет делать лишних запросов)
+        nativePriceInUsd = await this.getNativePrice().catch(() => {
+          switch (this.currentNetwork) {
+            case 'BSC': return 600;
+            case 'BASE':
+            case 'ETH': return 3000;
+            default: return 3000;
+          }
+        });
+      }
       
       return {
         price: priceNative || (priceUsd / nativePriceInUsd), // Цена в нативной валюте
