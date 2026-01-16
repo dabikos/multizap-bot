@@ -191,6 +191,9 @@ class TelegramBotManager {
           { text: '📋 Мои ордера', callback_data: `list_orders_${this.getTokenShortId(chatId, tokenAddress)}` }
         ],
         [
+          { text: '🗑️ Удалить токен', callback_data: `remove_token_${tokenAddress}` }
+        ],
+        [
           { text: '📊 Обновить', callback_data: `select_token_${tokenAddress}` },
           { text: '❌ Отмена', callback_data: 'cancel' }
         ]
@@ -608,11 +611,24 @@ class TelegramBotManager {
         }
 
         // Фильтруем только активные токены для ускорения загрузки
+        // Используем батчинг и задержки для избежания rate limit
         const activeTokens = [];
         const tokenInfoMap = {};
         
+        // Обрабатываем токены батчами по 5 с задержкой между батчами
+        const batchSize = 5;
+        const delayBetweenBatches = 2000; // 2 секунды между батчами
+        const delayBetweenRequests = 300; // 300мс между запросами в батче
+        
         for (let i = 0; i < tokens.length; i++) {
           try {
+            // Добавляем задержку между запросами
+            if (i > 0 && i % batchSize === 0) {
+              await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+            } else if (i > 0) {
+              await new Promise(resolve => setTimeout(resolve, delayBetweenRequests));
+            }
+            
             const tokenInfo = await this.web3Manager.getTokenInfo(tokens[i]);
             tokenInfoMap[tokens[i]] = tokenInfo;
             // Показываем только активные токены
@@ -620,7 +636,13 @@ class TelegramBotManager {
               activeTokens.push(tokens[i]);
             }
           } catch (error) {
-            console.warn(`Ошибка получения информации о токене ${tokens[i]}:`, error.message);
+            // Игнорируем ошибки rate limit и missing revert data
+            const isRateLimit = error.message?.includes('rate limit') || 
+                               error.message?.includes('missing revert data') ||
+                               error.code === 'CALL_EXCEPTION';
+            if (!isRateLimit) {
+              console.warn(`Ошибка получения информации о токене ${tokens[i]}:`, error.message);
+            }
             // Пропускаем токены с ошибками
           }
         }
@@ -1782,9 +1804,24 @@ class TelegramBotManager {
           );
           
           try {
-            // Проверяем, существует ли токен
-            const tokenInfo = await web3Manager.getTokenInfo(tokenAddress);
-            if (!tokenInfo || tokenInfo.token === '0x0000000000000000000000000000000000000000') {
+            // Проверяем, существует ли токен (с обработкой rate limit)
+            let tokenInfo;
+            try {
+              tokenInfo = await web3Manager.getTokenInfo(tokenAddress);
+            } catch (error) {
+              // Игнорируем ошибки rate limit при проверке
+              const isRateLimit = error.message?.includes('rate limit') || 
+                                 error.message?.includes('missing revert data') ||
+                                 error.code === 'CALL_EXCEPTION';
+              if (isRateLimit) {
+                console.warn('Rate limit при проверке токена, продолжаем удаление');
+                tokenInfo = null; // Продолжаем удаление даже если не удалось проверить
+              } else {
+                throw error;
+              }
+            }
+            
+            if (tokenInfo && tokenInfo.token === '0x0000000000000000000000000000000000000000') {
               await this.bot.editMessageText(
                 `❌ Токен \`${shortAddress}\` не найден в контракте.`,
                 {
@@ -1804,7 +1841,7 @@ class TelegramBotManager {
               `✅ Токен успешно удален!\n\n` +
               `📍 Токен: \`${shortAddress}\`\n` +
               `🔗 Транзакция: ${explorerUrl}/tx/${txHash}\n\n` +
-              `💡 Используйте /positions для просмотра обновленных позиций`,
+              `💡 Обновляю список позиций...`,
               {
                 chat_id: chatId,
                 message_id: callbackQuery.message.message_id,
@@ -1813,6 +1850,15 @@ class TelegramBotManager {
             );
             
             this.bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Токен удален!' });
+            
+            // Автоматически обновляем список позиций через 2 секунды
+            setTimeout(async () => {
+              try {
+                await this.handlePositions(chatId);
+              } catch (error) {
+                console.error('Ошибка обновления позиций после удаления:', error.message);
+              }
+            }, 2000);
           } catch (error) {
             let errorMessage = error.message || 'Неизвестная ошибка';
             if (errorMessage.length > 4000) {
@@ -1987,6 +2033,7 @@ class TelegramBotManager {
             }
 
             // Фильтруем только активные токены для ускорения загрузки
+            // Используем батчинг и задержки для избежания rate limit
             const activeTokens = [];
             const tokenInfoMap = {};
             
@@ -1998,8 +2045,20 @@ class TelegramBotManager {
             );
             const wethAddress = await routerContract.WETH().catch(() => null);
             
+            // Обрабатываем токены батчами по 5 с задержкой между батчами
+            const batchSize = 5;
+            const delayBetweenBatches = 2000; // 2 секунды между батчами
+            const delayBetweenRequests = 300; // 300мс между запросами в батче
+            
             for (let i = 0; i < tokens.length; i++) {
               try {
+                // Добавляем задержку между запросами
+                if (i > 0 && i % batchSize === 0) {
+                  await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+                } else if (i > 0) {
+                  await new Promise(resolve => setTimeout(resolve, delayBetweenRequests));
+                }
+                
                 const tokenInfo = await web3Manager.getTokenInfo(tokens[i]);
                 tokenInfoMap[tokens[i]] = tokenInfo;
                 // Показываем только активные токены
@@ -2007,7 +2066,13 @@ class TelegramBotManager {
                   activeTokens.push(tokens[i]);
                 }
               } catch (error) {
-                console.warn(`Ошибка получения информации о токене ${tokens[i]}:`, error.message);
+                // Игнорируем ошибки rate limit и missing revert data
+                const isRateLimit = error.message?.includes('rate limit') || 
+                                   error.message?.includes('missing revert data') ||
+                                   error.code === 'CALL_EXCEPTION';
+                if (!isRateLimit) {
+                  console.warn(`Ошибка получения информации о токене ${tokens[i]}:`, error.message);
+                }
                 // Пропускаем токены с ошибками
               }
             }
@@ -2145,11 +2210,24 @@ class TelegramBotManager {
       }
 
       // Фильтруем только активные токены для ускорения загрузки
+      // Используем батчинг и задержки для избежания rate limit
       const activeTokens = [];
       const tokenInfoMap = {};
       
+      // Обрабатываем токены батчами по 5 с задержкой между батчами
+      const batchSize = 5;
+      const delayBetweenBatches = 2000; // 2 секунды между батчами
+      const delayBetweenRequests = 300; // 300мс между запросами в батче
+      
       for (let i = 0; i < tokens.length; i++) {
         try {
+          // Добавляем задержку между запросами
+          if (i > 0 && i % batchSize === 0) {
+            await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+          } else if (i > 0) {
+            await new Promise(resolve => setTimeout(resolve, delayBetweenRequests));
+          }
+          
           const tokenInfo = await this.web3Manager.getTokenInfo(tokens[i]);
           tokenInfoMap[tokens[i]] = tokenInfo;
           // Показываем только активные токены
@@ -2157,7 +2235,13 @@ class TelegramBotManager {
             activeTokens.push(tokens[i]);
           }
         } catch (error) {
-          console.warn(`Ошибка получения информации о токене ${tokens[i]}:`, error.message);
+          // Игнорируем ошибки rate limit и missing revert data
+          const isRateLimit = error.message?.includes('rate limit') || 
+                             error.message?.includes('missing revert data') ||
+                             error.code === 'CALL_EXCEPTION';
+          if (!isRateLimit) {
+            console.warn(`Ошибка получения информации о токене ${tokens[i]}:`, error.message);
+          }
           // Пропускаем токены с ошибками
         }
       }
