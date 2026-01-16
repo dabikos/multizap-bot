@@ -5,7 +5,7 @@ const NETWORKS = {
   ETH: {
     name: 'Ethereum',
     chainId: 1,
-    rpcUrl: process.env.ETH_RPC_URL || 'https://eth.llamarpc.com',
+    rpcUrl: process.env.ETH_RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/ToISL-WHSN7SSOY1ujU5d',
     routerAddress: process.env.ETH_ROUTER_ADDRESS || '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D', // Uniswap V2 Router
     factoryAddress: process.env.ETH_FACTORY_ADDRESS || '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f', // Uniswap V2 Factory
     usdtAddress: process.env.ETH_USDT_ADDRESS || '0xdAC17F958D2ee523a2206206994597C13D831ec7', // USDT на Ethereum
@@ -31,7 +31,7 @@ const NETWORKS = {
   BASE: {
     name: 'Base',
     chainId: 8453,
-    rpcUrl: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+    rpcUrl: process.env.BASE_RPC_URL || 'https://base-mainnet.g.alchemy.com/v2/ToISL-WHSN7SSOY1ujU5d',
     routerAddress: process.env.BASE_ROUTER_ADDRESS || '0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24', // Uniswap V2 Router on Base
     factoryAddress: process.env.BASE_FACTORY_ADDRESS || '0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6', // Uniswap V2 Factory on Base (получен из Router.factory())
     usdtAddress: process.env.BASE_USDT_ADDRESS || '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2', // USDC на Base (используем как USDT аналог)
