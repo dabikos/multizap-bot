@@ -232,6 +232,7 @@ class TelegramBotManager {
       { command: 'register', description: '🔐 Регистрация (добавить ключ)' },
       { command: 'deploy', description: '🚀 Развернуть контракт' },
       { command: 'addtoken', description: '🪙 Добавить токен' },
+      { command: 'removetoken', description: '🗑️ Удалить токен' },
       { command: 'tokens', description: '📝 Список токенов' },
       { command: 'positions', description: '📊 Мои позиции' },
       { command: 'zapin', description: '💰 Купить токены' },
@@ -276,6 +277,7 @@ class TelegramBotManager {
 
 **Управление токенами:**
 /addtoken - Добавить новый токен
+/removetoken - Удалить токен
 /tokens - Список поддерживаемых токенов
 /positions - Просмотр позиций
 
@@ -427,6 +429,12 @@ class TelegramBotManager {
     this.bot.onText(/\/addtoken/, (msg) => {
       const chatId = msg.chat.id;
       this.handleAddToken(chatId);
+    });
+
+    // Команда /removetoken
+    this.bot.onText(/\/removetoken/, (msg) => {
+      const chatId = msg.chat.id;
+      this.handleRemoveToken(chatId);
     });
 
     // Команда /zapin
@@ -599,22 +607,51 @@ class TelegramBotManager {
           return;
         }
 
+        // Фильтруем только активные токены для ускорения загрузки
+        const activeTokens = [];
+        const tokenInfoMap = {};
+        
+        for (let i = 0; i < tokens.length; i++) {
+          try {
+            const tokenInfo = await this.web3Manager.getTokenInfo(tokens[i]);
+            tokenInfoMap[tokens[i]] = tokenInfo;
+            // Показываем только активные токены
+            if (tokenInfo.isActive) {
+              activeTokens.push(tokens[i]);
+            }
+          } catch (error) {
+            console.warn(`Ошибка получения информации о токене ${tokens[i]}:`, error.message);
+            // Пропускаем токены с ошибками
+          }
+        }
+
+        if (activeTokens.length === 0) {
+          this.bot.sendMessage(chatId, '📝 Нет активных позиций. Добавьте токены командой /addtoken');
+          return;
+        }
+
         let message = '📊 Ваши позиции:\n\n';
         const keyboard = [];
         
-        for (let i = 0; i < tokens.length; i++) {
-          const tokenInfo = await this.web3Manager.getTokenInfo(tokens[i]);
-          const shortAddress = `${tokens[i].slice(0, 6)}...${tokens[i].slice(-4)}`;
-          const status = tokenInfo.isActive ? '✅' : '❌';
+        for (let i = 0; i < activeTokens.length; i++) {
+          const tokenAddress = activeTokens[i];
+          const tokenInfo = tokenInfoMap[tokenAddress];
+          const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
           
-          message += `${i + 1}. ${status} \`${shortAddress}\`\n`;
+          message += `${i + 1}. ✅ \`${shortAddress}\`\n`;
           
           // Создаем кнопку для каждого токена
           keyboard.push([{
-            text: `${i + 1}. ${shortAddress} ${status}`,
-            callback_data: `select_token_${tokens[i]}`
+            text: `${i + 1}. ${shortAddress} ✅`,
+            callback_data: `select_token_${tokenAddress}`
           }]);
         }
+
+        // Добавляем кнопку для удаления токенов
+        keyboard.push([{
+          text: '🗑️ Удалить токен',
+          callback_data: 'remove_token_menu'
+        }]);
 
         const replyMarkup = {
           inline_keyboard: keyboard
@@ -1600,6 +1637,7 @@ class TelegramBotManager {
 🔐 /register - Регистрация (добавить приватный ключ)
 🚀 /deploy - Развернуть MultiZap контракт
 🪙 /addtoken - Добавить новый токен
+🗑️ /removetoken - Удалить токен
 📊 /positions - Просмотр позиций с быстрой покупкой
 💰 /zapin - Выполнить zap-in операцию
 🔄 /exit - Выполнить exit-and-sell операцию
@@ -1621,11 +1659,15 @@ class TelegramBotManager {
    /addtoken
    (введите: адрес_токена)
 
-4. Zap-in операция:
+4. Удаление токена:
+   /removetoken
+   (введите: адрес_токена)
+
+5. Zap-in операция:
    /zapin
    (введите: адрес_токена,количество_ETH)
 
-5. Exit операция:
+6. Exit операция:
    /exit
    (введите: адрес_токена)
 
@@ -1639,6 +1681,157 @@ class TelegramBotManager {
           }
           
           this.bot.answerCallbackQuery(callbackQuery.id, { text: 'Выполняется...' });
+        }
+        
+        // Обработка меню удаления токенов
+        else if (data === 'remove_token_menu') {
+          const web3Manager = this.getWeb3ManagerForUser(chatId);
+          web3Manager.setPrivateKey(user.privateKey);
+          const userContract = this.userManager.getUserContract(chatId);
+          web3Manager.setContractAddress(userContract);
+          
+          try {
+            const tokens = await web3Manager.getAllTokens();
+            
+            if (tokens.length === 0) {
+              await this.bot.editMessageText(
+                '📝 Список токенов пуст. Нечего удалять.',
+                {
+                  chat_id: chatId,
+                  message_id: callbackQuery.message.message_id
+                }
+              );
+              this.bot.answerCallbackQuery(callbackQuery.id, { text: 'Список токенов пуст' });
+              return;
+            }
+
+            let message = '🗑️ Выберите токен для удаления:\n\n';
+            const keyboard = [];
+            
+            // Показываем все токены (включая неактивные) для удаления
+            for (let i = 0; i < tokens.length; i++) {
+              try {
+                const tokenInfo = await web3Manager.getTokenInfo(tokens[i]);
+                const shortAddress = `${tokens[i].slice(0, 6)}...${tokens[i].slice(-4)}`;
+                const status = tokenInfo.isActive ? '✅' : '❌';
+                
+                message += `${i + 1}. ${status} \`${shortAddress}\`\n`;
+                
+                keyboard.push([{
+                  text: `${i + 1}. ${shortAddress} ${status}`,
+                  callback_data: `remove_token_${tokens[i]}`
+                }]);
+              } catch (error) {
+                console.warn(`Ошибка получения информации о токене ${tokens[i]}:`, error.message);
+                // Показываем токен даже если не удалось получить информацию
+                const shortAddress = `${tokens[i].slice(0, 6)}...${tokens[i].slice(-4)}`;
+                message += `${i + 1}. ❓ \`${shortAddress}\`\n`;
+                keyboard.push([{
+                  text: `${i + 1}. ${shortAddress} ❓`,
+                  callback_data: `remove_token_${tokens[i]}`
+                }]);
+              }
+            }
+
+            keyboard.push([{
+              text: '🔙 Назад к позициям',
+              callback_data: 'home_positions'
+            }]);
+
+            const replyMarkup = {
+              inline_keyboard: keyboard
+            };
+
+            await this.bot.editMessageText(message, {
+              chat_id: chatId,
+              message_id: callbackQuery.message.message_id,
+              parse_mode: 'Markdown',
+              reply_markup: replyMarkup
+            });
+
+            this.bot.answerCallbackQuery(callbackQuery.id, { text: 'Выберите токен для удаления' });
+          } catch (error) {
+            await this.bot.editMessageText(
+              `❌ Ошибка получения списка токенов: ${error.message}`,
+              {
+                chat_id: chatId,
+                message_id: callbackQuery.message.message_id
+              }
+            );
+            this.bot.answerCallbackQuery(callbackQuery.id, { text: 'Ошибка', show_alert: true });
+          }
+        }
+        
+        // Обработка удаления конкретного токена
+        else if (data.startsWith('remove_token_')) {
+          const tokenAddress = data.replace('remove_token_', '');
+          const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+          
+          const web3Manager = this.getWeb3ManagerForUser(chatId);
+          web3Manager.setPrivateKey(user.privateKey);
+          const userContract = this.userManager.getUserContract(chatId);
+          web3Manager.setContractAddress(userContract);
+          
+          await this.bot.editMessageText(
+            `⏳ Удаляю токен \`${shortAddress}\`...`,
+            {
+              chat_id: chatId,
+              message_id: callbackQuery.message.message_id,
+              parse_mode: 'Markdown'
+            }
+          );
+          
+          try {
+            // Проверяем, существует ли токен
+            const tokenInfo = await web3Manager.getTokenInfo(tokenAddress);
+            if (!tokenInfo || tokenInfo.token === '0x0000000000000000000000000000000000000000') {
+              await this.bot.editMessageText(
+                `❌ Токен \`${shortAddress}\` не найден в контракте.`,
+                {
+                  chat_id: chatId,
+                  message_id: callbackQuery.message.message_id,
+                  parse_mode: 'Markdown'
+                }
+              );
+              this.bot.answerCallbackQuery(callbackQuery.id, { text: 'Токен не найден', show_alert: true });
+              return;
+            }
+
+            const txHash = await web3Manager.removeToken(tokenAddress);
+            
+            const explorerUrl = this.getExplorerUrl(chatId);
+            await this.bot.editMessageText(
+              `✅ Токен успешно удален!\n\n` +
+              `📍 Токен: \`${shortAddress}\`\n` +
+              `🔗 Транзакция: ${explorerUrl}/tx/${txHash}\n\n` +
+              `💡 Используйте /positions для просмотра обновленных позиций`,
+              {
+                chat_id: chatId,
+                message_id: callbackQuery.message.message_id,
+                parse_mode: 'Markdown'
+              }
+            );
+            
+            this.bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Токен удален!' });
+          } catch (error) {
+            let errorMessage = error.message || 'Неизвестная ошибка';
+            if (errorMessage.length > 4000) {
+              errorMessage = errorMessage.substring(0, 4000) + '...';
+            }
+            
+            await this.bot.editMessageText(
+              `❌ Ошибка удаления токена:\n\n` +
+              `📍 Токен: \`${shortAddress}\`\n\n` +
+              `${errorMessage}`,
+              {
+                chat_id: chatId,
+                message_id: callbackQuery.message.message_id,
+                parse_mode: 'Markdown'
+              }
+            );
+            
+            this.bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Ошибка удаления', show_alert: true });
+          }
         }
         
         // Обработка отмены
@@ -1793,8 +1986,9 @@ class TelegramBotManager {
               return;
             }
 
-            let message = '📊 Ваши позиции:\n\n';
-            const keyboard = [];
+            // Фильтруем только активные токены для ускорения загрузки
+            const activeTokens = [];
+            const tokenInfoMap = {};
             
             // Получаем WETH адрес для определения типа пары
             const routerContract = new ethers.Contract(
@@ -1805,9 +1999,31 @@ class TelegramBotManager {
             const wethAddress = await routerContract.WETH().catch(() => null);
             
             for (let i = 0; i < tokens.length; i++) {
-              const tokenInfo = await web3Manager.getTokenInfo(tokens[i]);
-              const shortAddress = `${tokens[i].slice(0, 6)}...${tokens[i].slice(-4)}`;
-              const status = tokenInfo.isActive ? '✅' : '❌';
+              try {
+                const tokenInfo = await web3Manager.getTokenInfo(tokens[i]);
+                tokenInfoMap[tokens[i]] = tokenInfo;
+                // Показываем только активные токены
+                if (tokenInfo.isActive) {
+                  activeTokens.push(tokens[i]);
+                }
+              } catch (error) {
+                console.warn(`Ошибка получения информации о токене ${tokens[i]}:`, error.message);
+                // Пропускаем токены с ошибками
+              }
+            }
+
+            if (activeTokens.length === 0) {
+              this.bot.sendMessage(chatId, '📝 Нет активных позиций.');
+              return;
+            }
+
+            let message = '📊 Ваши позиции:\n\n';
+            const keyboard = [];
+            
+            for (let i = 0; i < activeTokens.length; i++) {
+              const tokenAddress = activeTokens[i];
+              const tokenInfo = tokenInfoMap[tokenAddress];
+              const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
               const baseToken = tokenInfo.baseToken;
               let pairType = 'Unknown';
               
@@ -1815,13 +2031,19 @@ class TelegramBotManager {
                 pairType = baseToken.toLowerCase() === wethAddress.toLowerCase() ? 'WBNB' : 'USDT';
               }
               
-              message += `${i + 1}. ${status} \`${shortAddress}\` (${pairType})\n`;
+              message += `${i + 1}. ✅ \`${shortAddress}\` (${pairType})\n`;
               
               keyboard.push([{
-                text: `${i + 1}. ${shortAddress} ${status} (${pairType})`,
-                callback_data: `select_token_${tokens[i]}`
+                text: `${i + 1}. ${shortAddress} ✅ (${pairType})`,
+                callback_data: `select_token_${tokenAddress}`
               }]);
             }
+
+            // Добавляем кнопку для удаления токенов
+            keyboard.push([{
+              text: '🗑️ Удалить токен',
+              callback_data: 'remove_token_menu'
+            }]);
 
             const replyMarkup = {
               inline_keyboard: keyboard
@@ -1837,6 +2059,66 @@ class TelegramBotManager {
         }, 2000);
       } catch (error) {
         this.bot.sendMessage(chatId, `❌ Ошибка добавления токена: ${error.message}`);
+      }
+    });
+  }
+
+  handleRemoveToken(chatId) {
+    const user = this.userManager.getUser(chatId);
+    
+    if (!user || !user.contractAddress) {
+      this.bot.sendMessage(chatId, '❌ Сначала разверните контракт командой /deploy');
+      return;
+    }
+
+    this.bot.sendMessage(chatId, '🗑️ Введите адрес токена для удаления:');
+
+    this.bot.once('message', async (msg) => {
+      if (msg.chat.id !== chatId) return;
+      
+      try {
+        const tokenAddress = msg.text.trim();
+        
+        if (!tokenAddress || !tokenAddress.startsWith('0x') || tokenAddress.length !== 42) {
+          this.bot.sendMessage(chatId, '❌ Неверный формат адреса токена. Попробуйте еще раз с /removetoken');
+          return;
+        }
+
+        // Повторная проверка пользователя
+        const currentUser = this.userManager.getUser(chatId);
+        const userContract = currentUser ? this.userManager.getUserContract(chatId) : null;
+        if (!currentUser || !userContract) {
+          this.bot.sendMessage(chatId, '❌ Сначала разверните контракт командой /deploy');
+          return;
+        }
+
+        const web3Manager = this.getWeb3ManagerForUser(chatId);
+        web3Manager.setPrivateKey(currentUser.privateKey);
+        web3Manager.setContractAddress(userContract);
+        
+        // Проверяем, существует ли токен
+        const tokenInfo = await web3Manager.getTokenInfo(tokenAddress);
+        if (!tokenInfo || tokenInfo.token === '0x0000000000000000000000000000000000000000') {
+          this.bot.sendMessage(chatId, '❌ Токен не найден в контракте.');
+          return;
+        }
+
+        this.bot.sendMessage(chatId, '⏳ Удаляю токен...');
+        const txHash = await web3Manager.removeToken(tokenAddress);
+        
+        const explorerUrl = this.getExplorerUrl(chatId);
+        this.bot.sendMessage(chatId, 
+          `✅ Токен успешно удален!\n\n` +
+          `📍 Токен: \`${tokenAddress}\`\n` +
+          `🔗 Транзакция: ${explorerUrl}/tx/${txHash}`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch (error) {
+        let errorMessage = error.message || 'Неизвестная ошибка';
+        if (errorMessage.length > 4000) {
+          errorMessage = errorMessage.substring(0, 4000) + '...';
+        }
+        this.bot.sendMessage(chatId, `❌ Ошибка удаления токена: ${errorMessage}`);
       }
     });
   }
@@ -1862,21 +2144,50 @@ class TelegramBotManager {
         return;
       }
 
+      // Фильтруем только активные токены для ускорения загрузки
+      const activeTokens = [];
+      const tokenInfoMap = {};
+      
+      for (let i = 0; i < tokens.length; i++) {
+        try {
+          const tokenInfo = await this.web3Manager.getTokenInfo(tokens[i]);
+          tokenInfoMap[tokens[i]] = tokenInfo;
+          // Показываем только активные токены
+          if (tokenInfo.isActive) {
+            activeTokens.push(tokens[i]);
+          }
+        } catch (error) {
+          console.warn(`Ошибка получения информации о токене ${tokens[i]}:`, error.message);
+          // Пропускаем токены с ошибками
+        }
+      }
+
+      if (activeTokens.length === 0) {
+        this.bot.sendMessage(chatId, '📝 Нет активных позиций. Добавьте токены командой /addtoken');
+        return;
+      }
+
       let message = '📊 Ваши позиции:\n\n';
       const keyboard = [];
       
-      for (let i = 0; i < tokens.length; i++) {
-        const tokenInfo = await this.web3Manager.getTokenInfo(tokens[i]);
-        const shortAddress = `${tokens[i].slice(0, 6)}...${tokens[i].slice(-4)}`;
-        const status = tokenInfo.isActive ? '✅' : '❌';
+      for (let i = 0; i < activeTokens.length; i++) {
+        const tokenAddress = activeTokens[i];
+        const tokenInfo = tokenInfoMap[tokenAddress];
+        const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
         
-        message += `${i + 1}. ${status} \`${shortAddress}\`\n`;
+        message += `${i + 1}. ✅ \`${shortAddress}\`\n`;
         
         keyboard.push([{
-          text: `${i + 1}. ${shortAddress} ${status}`,
-          callback_data: `select_token_${tokens[i]}`
+          text: `${i + 1}. ${shortAddress} ✅`,
+          callback_data: `select_token_${tokenAddress}`
         }]);
       }
+
+      // Добавляем кнопку для просмотра всех токенов (включая неактивные)
+      keyboard.push([{
+        text: '🗑️ Удалить токен',
+        callback_data: 'remove_token_menu'
+      }]);
 
       const replyMarkup = {
         inline_keyboard: keyboard
