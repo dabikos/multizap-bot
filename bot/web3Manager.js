@@ -160,11 +160,29 @@ class Web3Manager {
         // Для Ethereum используем минимально необходимый gasLimit (контракт использует ~2.9M)
         baseGasLimit = BigInt(3000000); // Немного больше реального использования (2.9M)
       } else {
-        baseGasLimit = deployOptions.gasLimit 
-          ? (typeof deployOptions.gasLimit === 'string' ? BigInt(deployOptions.gasLimit) : deployOptions.gasLimit)
-          : BigInt(2000000);
-        // Увеличиваем gasLimit в 2 раза для деплоя (для других сетей)
-        baseGasLimit = baseGasLimit * 2n;
+        // Пробуем estimateGas для точного расчёта (особенно важно для L2 сетей как MegaETH)
+        try {
+          const MultiZapFactory = new ethers.ContractFactory(this.abi, this.bytecode, this.wallet);
+          const deployTx = await MultiZapFactory.getDeployTransaction(
+            ethers.getAddress(this.networkConfig.routerAddress),
+            ethers.getAddress(this.networkConfig.factoryAddress),
+            ethers.getAddress(this.networkConfig.usdtAddress)
+          );
+          const estimated = await this.provider.estimateGas({
+            from: this.wallet.address,
+            data: deployTx.data
+          });
+          // Добавляем 20% запас
+          baseGasLimit = estimated + (estimated / 5n);
+          console.log(`EstimateGas для деплоя: ${estimated.toString()}, с запасом: ${baseGasLimit.toString()}`);
+        } catch (estError) {
+          console.warn('⚠️ Не удалось estimateGas, используем расчётный лимит:', estError.message);
+          baseGasLimit = deployOptions.gasLimit 
+            ? (typeof deployOptions.gasLimit === 'string' ? BigInt(deployOptions.gasLimit) : deployOptions.gasLimit)
+            : BigInt(2000000);
+          // Увеличиваем gasLimit в 2 раза для деплоя (для других сетей)
+          baseGasLimit = baseGasLimit * 2n;
+        }
       }
       
       deployOptions.gasLimit = baseGasLimit;
@@ -1069,7 +1087,7 @@ class Web3Manager {
       // Если сеть поддерживает EIP-1559, используем maxFeePerGas и maxPriorityFeePerGas
       if (this.networkConfig.supportsEIP1559) {
         // Для Ethereum и Base используем динамические значения из сети
-        if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+        if (feeData.maxFeePerGas != null && feeData.maxPriorityFeePerGas != null) {
           // Увеличиваем maxFeePerGas на 50% для надежности (Ethereum может быть очень загружен)
           const maxFeePerGas = feeData.maxFeePerGas + (feeData.maxFeePerGas / 2n);
           // Увеличиваем maxPriorityFeePerGas на 30% для более быстрого включения в блок
