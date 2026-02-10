@@ -193,17 +193,22 @@ class Web3Manager {
       const factoryAddr = ethers.getAddress(this.networkConfig.factoryAddress);
       const usdtAddr = ethers.getAddress(this.networkConfig.usdtAddress);
       
+      // Определяем WETH адрес (роутеры могут использовать WETH() или WETH9())
+      const wethAddr = await this.getWethAddress();
+      
       console.log('Проверка адресов:');
       console.log('  Router:', routerAddr);
       console.log('  Factory:', factoryAddr);
       console.log('  USDT:', usdtAddr);
+      console.log('  WETH:', wethAddr);
 
       const MultiZapFactory = new ethers.ContractFactory(this.abi, this.bytecode, this.wallet);
       const multiZap = await MultiZapFactory.deploy(
         routerAddr,
         factoryAddr,
         usdtAddr,
-        deployOptions  // Опции передаются как 4-й аргумент
+        wethAddr,
+        deployOptions  // Опции передаются как 5-й аргумент
       );
       await multiZap.waitForDeployment();
       const address = await multiZap.getAddress();
@@ -275,13 +280,7 @@ class Web3Manager {
         this.provider
       );
       
-      const routerContract = new ethers.Contract(
-        this.networkConfig.routerAddress,
-        ['function WETH() external pure returns (address)'],
-        this.provider
-      );
-      
-      const wethAddress = await routerContract.WETH();
+      const wethAddress = await this.getWethAddress();
       const baseTokenAddress = useUSDT ? (this.networkConfig.usdtAddress || ethers.ZeroAddress) : wethAddress;
       
       if (useUSDT && baseTokenAddress === ethers.ZeroAddress) {
@@ -1183,6 +1182,54 @@ class Web3Manager {
   calculateSlippage(amount, slippagePercent = config.DEFAULT_SLIPPAGE) {
     // Максимальная гибкость - возвращаем 0
     return 0n;
+  }
+
+  /**
+   * Определяет WETH адрес роутера (поддержка WETH() и WETH9())
+   */
+  async getWethAddress() {
+    const routerAddr = this.networkConfig.routerAddress;
+    
+    // Сначала пробуем WETH() (стандарт Uniswap V2)
+    try {
+      const routerWETH = new ethers.Contract(
+        routerAddr,
+        ['function WETH() external pure returns (address)'],
+        this.provider
+      );
+      const weth = await routerWETH.WETH();
+      if (weth && weth !== ethers.ZeroAddress) {
+        console.log(`WETH адрес (через WETH()): ${weth}`);
+        return weth;
+      }
+    } catch (e) {
+      // WETH() не поддерживается, пробуем WETH9()
+    }
+    
+    // Затем пробуем WETH9() (Kumbaya, некоторые V3 роутеры)
+    try {
+      const routerWETH9 = new ethers.Contract(
+        routerAddr,
+        ['function WETH9() external pure returns (address)'],
+        this.provider
+      );
+      const weth = await routerWETH9.WETH9();
+      if (weth && weth !== ethers.ZeroAddress) {
+        console.log(`WETH адрес (через WETH9()): ${weth}`);
+        return weth;
+      }
+    } catch (e) {
+      // WETH9() тоже не поддерживается
+    }
+    
+    // Fallback: используем известный WETH адрес для OP Stack сетей
+    if (this.currentNetwork === 'MEGAETH' || this.currentNetwork === 'BASE') {
+      const fallbackWeth = '0x4200000000000000000000000000000000000006';
+      console.log(`WETH адрес (fallback для ${this.currentNetwork}): ${fallbackWeth}`);
+      return fallbackWeth;
+    }
+    
+    throw new Error('Не удалось определить WETH адрес роутера');
   }
 
   async getEthPrice() {

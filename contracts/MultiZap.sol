@@ -107,6 +107,7 @@ contract MultiZap is Ownable {
     IUniswapV2Router public router;
     IUniswapV2Factory public factory;
     address public usdtAddress;  // Адрес USDT токена
+    address public wethAddress;  // Адрес WETH/WBNB (задается при деплое, т.к. роутеры используют разные имена функций)
     mapping(address => TokenInfo) public supportedTokens;
     address[] public tokenList;
     
@@ -116,12 +117,14 @@ contract MultiZap is Ownable {
     event LiquidityWithdrawn(address indexed token, uint256 lpAmount, uint256 tokenAmount, uint256 nativeAmount);
     event USDTAddressSet(address indexed usdtAddress);
 
-    constructor(address _router, address _factory, address _usdtAddress) Ownable(msg.sender) {
+    constructor(address _router, address _factory, address _usdtAddress, address _wethAddress) Ownable(msg.sender) {
         require(_router != address(0), "INVALID_ROUTER");
         require(_factory != address(0), "INVALID_FACTORY");
+        require(_wethAddress != address(0), "INVALID_WETH");
         router = IUniswapV2Router(_router);
         factory = IUniswapV2Factory(_factory);
         usdtAddress = _usdtAddress;
+        wethAddress = _wethAddress;
     }
 
     /**
@@ -143,7 +146,7 @@ contract MultiZap is Ownable {
         require(_token != address(0), "INVALID_TOKEN");
         require(_lpToken != address(0), "INVALID_LP_TOKEN");
         require(_baseToken != address(0), "INVALID_BASE_TOKEN");
-        address wbnb = router.WETH();
+        address wbnb = wethAddress;
         require(_baseToken == wbnb || _baseToken == usdtAddress, "INVALID_BASE_TOKEN");
         require(supportedTokens[_token].token == address(0), "TOKEN_ALREADY_EXISTS");
 
@@ -167,7 +170,7 @@ contract MultiZap is Ownable {
         require(_token != address(0), "INVALID_TOKEN");
         require(supportedTokens[_token].token == address(0), "TOKEN_ALREADY_EXISTS");
 
-        address baseToken = _useUSDT ? usdtAddress : router.WETH();
+        address baseToken = _useUSDT ? usdtAddress : wethAddress;
         require(baseToken != address(0), "BASE_TOKEN_NOT_SET");
         
         // В PancakeSwap порядок токенов важен: getPair работает только если tokenA < tokenB
@@ -258,7 +261,7 @@ contract MultiZap is Ownable {
 
         TokenInfo memory tokenInfo = supportedTokens[_token];
         address baseToken = tokenInfo.baseToken;
-        address wbnb = router.WETH();
+        address wbnb = wethAddress;
 
         if (baseToken == wbnb) {
             // WBNB пара - существующая логика
@@ -367,7 +370,7 @@ contract MultiZap is Ownable {
         
         TokenInfo memory tokenInfo = supportedTokens[_token];
         address baseToken = tokenInfo.baseToken;
-        address wbnb = router.WETH();
+        address wbnb = wethAddress;
         
         // Проверяем, что baseToken установлен
         require(baseToken != address(0), "BASE_TOKEN_NOT_SET");
@@ -555,7 +558,7 @@ contract MultiZap is Ownable {
         
         TokenInfo memory tokenInfo = supportedTokens[_token];
         address baseToken = tokenInfo.baseToken;
-        address wbnb = router.WETH();
+        address wbnb = wethAddress;
         
         // Проверяем, что baseToken установлен
         require(baseToken != address(0), "BASE_TOKEN_NOT_SET");
@@ -712,7 +715,7 @@ contract MultiZap is Ownable {
 
         address lpToken = info.lpToken;
         address baseToken = info.baseToken;
-        address wbnb = router.WETH();
+        address wbnb = wethAddress;
         uint lpBal = IERC20(lpToken).balanceOf(address(this));
         require(lpBal > 0, "NO_LP");
 
