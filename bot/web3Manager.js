@@ -1082,9 +1082,17 @@ class Web3Manager {
           };
         } else {
           // Fallback для EIP-1559 сетей, если не получили данные
-          // Используем разумные значения по умолчанию
-          const defaultMaxFeePerGas = ethers.parseUnits('50', 'gwei'); // 50 gwei
-          const defaultMaxPriorityFeePerGas = ethers.parseUnits('2', 'gwei'); // 2 gwei
+          // Используем разумные значения по умолчанию для каждой сети
+          let defaultMaxFeePerGas, defaultMaxPriorityFeePerGas;
+          
+          if (this.currentNetwork === 'MEGAETH') {
+            // MegaETH: очень низкие комиссии (OP Stack, base fee ~0.001 gwei)
+            defaultMaxFeePerGas = ethers.parseUnits('0.1', 'gwei'); // 0.1 gwei
+            defaultMaxPriorityFeePerGas = ethers.parseUnits('0.01', 'gwei'); // 0.01 gwei
+          } else {
+            defaultMaxFeePerGas = ethers.parseUnits('50', 'gwei'); // 50 gwei
+            defaultMaxPriorityFeePerGas = ethers.parseUnits('2', 'gwei'); // 2 gwei
+          }
           
           console.warn('⚠️ Не удалось получить feeData для EIP-1559, используем значения по умолчанию');
           return {
@@ -1121,8 +1129,15 @@ class Web3Manager {
       // Fallback значения в зависимости от типа сети
       if (this.networkConfig.supportsEIP1559) {
         // Для EIP-1559 сетей используем maxFeePerGas и maxPriorityFeePerGas
-        const defaultMaxFeePerGas = ethers.parseUnits('50', 'gwei');
-        const defaultMaxPriorityFeePerGas = ethers.parseUnits('2', 'gwei');
+        let defaultMaxFeePerGas, defaultMaxPriorityFeePerGas;
+        
+        if (this.currentNetwork === 'MEGAETH') {
+          defaultMaxFeePerGas = ethers.parseUnits('0.1', 'gwei');
+          defaultMaxPriorityFeePerGas = ethers.parseUnits('0.01', 'gwei');
+        } else {
+          defaultMaxFeePerGas = ethers.parseUnits('50', 'gwei');
+          defaultMaxPriorityFeePerGas = ethers.parseUnits('2', 'gwei');
+        }
         
         console.log(`Fallback для EIP-1559: maxFeePerGas=${defaultMaxFeePerGas}, maxPriorityFeePerGas=${defaultMaxPriorityFeePerGas}`);
         
