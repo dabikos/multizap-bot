@@ -53,6 +53,19 @@ const NETWORKS = {
     gasPrice: process.env.MONAD_GAS_PRICE || '100', // 100 gwei (используется как maxFeePerGas для EIP-1559)
     gasLimit: process.env.MONAD_GAS_LIMIT || '2000000',
     supportsEIP1559: true
+  },
+  MEGAETH: {
+    name: 'MegaETH',
+    chainId: 4326,
+    rpcUrl: process.env.MEGAETH_RPC_URL || 'https://mainnet.megaeth.com/rpc',
+    routerAddress: process.env.MEGAETH_ROUTER_ADDRESS || '0xE5BbEF8De2DB447a7432A47EBa58924d94eE470e', // Kumbaya Router on MegaETH
+    factoryAddress: process.env.MEGAETH_FACTORY_ADDRESS || '0x68b34591F662508076927803C567Cc8006988A09', // Kumbaya Factory on MegaETH
+    usdtAddress: process.env.MEGAETH_USDT_ADDRESS || '0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb', // USDT0 на MegaETH
+    explorerUrl: 'https://mega.etherscan.io',
+    nativeCurrency: 'ETH',
+    gasPrice: process.env.MEGAETH_GAS_PRICE || null, // null = auto
+    gasLimit: process.env.MEGAETH_GAS_LIMIT || '2000000',
+    supportsEIP1559: true
   }
 };
 

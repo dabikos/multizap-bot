@@ -1183,7 +1183,8 @@ class Web3Manager {
         'ETH': 'ethereum',
         'BSC': 'bsc',
         'BASE': 'base',
-        'MONAD': 'monad'
+        'MONAD': 'monad',
+        'MEGAETH': 'megaeth'
       };
       
       const chainId = chainIdMap[this.currentNetwork] || 'bsc';
@@ -1245,6 +1246,7 @@ class Web3Manager {
           return 600; // Примерная цена BNB
         case 'BASE':
         case 'ETH':
+        case 'MEGAETH':
           return 3000; // Примерная цена ETH
         default:
           return 3000;
@@ -1259,7 +1261,8 @@ class Web3Manager {
         'ETH': 'ethereum',
         'BSC': 'bsc',
         'BASE': 'base',
-        'MONAD': 'monad'
+        'MONAD': 'monad',
+        'MEGAETH': 'megaeth'
       };
       
       const chainId = chainIdMap[this.currentNetwork] || 'bsc';
@@ -1335,7 +1338,8 @@ class Web3Manager {
           switch (this.currentNetwork) {
             case 'BSC': return 600;
             case 'BASE':
-            case 'ETH': return 3000;
+            case 'ETH':
+            case 'MEGAETH': return 3000;
             default: return 3000;
           }
         });
@@ -1418,6 +1422,7 @@ class Web3Manager {
             return 600;
           case 'BASE':
           case 'ETH':
+          case 'MEGAETH':
             return 3000;
           default:
             return 3000;

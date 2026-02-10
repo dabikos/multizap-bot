@@ -2525,6 +2525,12 @@ class TelegramBotManager {
           }
         ],
         [
+          { 
+            text: `${currentNetwork === 'MEGAETH' ? '✅' : ''} MegaETH (MEGAETH)`, 
+            callback_data: 'switch_network_MEGAETH' 
+          }
+        ],
+        [
           { text: '❌ Отмена', callback_data: 'cancel_network' }
         ]
       ]
