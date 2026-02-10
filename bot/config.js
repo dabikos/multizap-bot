@@ -59,7 +59,7 @@ const NETWORKS = {
     chainId: 4326,
     rpcUrl: process.env.MEGAETH_RPC_URL || 'https://mainnet.megaeth.com/rpc',
     routerAddress: process.env.MEGAETH_ROUTER_ADDRESS || '0xE5BbEF8De2DB447a7432A47EBa58924d94eE470e', // Kumbaya Router on MegaETH
-    factoryAddress: process.env.MEGAETH_FACTORY_ADDRESS || '0x68b34591F662508076927803C567Cc8006988A09', // Kumbaya Factory on MegaETH
+    factoryAddress: process.env.MEGAETH_FACTORY_ADDRESS || '0x68b34591f662508076927803c567Cc8006988a09', // Kumbaya Factory on MegaETH
     usdtAddress: process.env.MEGAETH_USDT_ADDRESS || '0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb', // USDT0 на MegaETH
     explorerUrl: 'https://mega.etherscan.io',
     nativeCurrency: 'ETH',
