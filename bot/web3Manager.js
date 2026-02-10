@@ -162,11 +162,13 @@ class Web3Manager {
       } else {
         // Пробуем estimateGas для точного расчёта (особенно важно для L2 сетей как MegaETH)
         try {
+          const wethForEstimate = await this.getWethAddress();
           const MultiZapFactory = new ethers.ContractFactory(this.abi, this.bytecode, this.wallet);
           const deployTx = await MultiZapFactory.getDeployTransaction(
             ethers.getAddress(this.networkConfig.routerAddress),
             ethers.getAddress(this.networkConfig.factoryAddress),
-            ethers.getAddress(this.networkConfig.usdtAddress)
+            ethers.getAddress(this.networkConfig.usdtAddress),
+            wethForEstimate
           );
           const estimated = await this.provider.estimateGas({
             from: this.wallet.address,
