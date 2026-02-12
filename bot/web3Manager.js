@@ -26,20 +26,20 @@ class Web3Manager {
     if (!config.NETWORKS[newNetwork]) {
       throw new Error(`Сеть ${networkName} не поддерживается. Доступные сети: ${Object.keys(config.NETWORKS).join(', ')}`);
     }
-    
+
     this.currentNetwork = newNetwork;
     this.networkConfig = config.getNetworkConfig(this.currentNetwork);
     this.provider = new ethers.JsonRpcProvider(this.networkConfig.rpcUrl);
-    
+
     // Пересоздаем кошелек с новым провайдером, если он был установлен
     if (this.wallet) {
       const privateKey = this.wallet.privateKey;
       this.wallet = new ethers.Wallet(privateKey, this.provider);
     }
-    
+
     // Сбрасываем контракт, так как он привязан к сети
     this.multiZapContract = null;
-    
+
     return this.currentNetwork;
   }
 
@@ -61,10 +61,10 @@ class Web3Manager {
       try {
         return await fn();
       } catch (error) {
-        const isRateLimit = error.message?.includes('rate limit') || 
-                           error.info?.error?.code === -32016 ||
-                           (error.code === 'CALL_EXCEPTION' && error.message?.includes('missing revert data'));
-        
+        const isRateLimit = error.message?.includes('rate limit') ||
+          error.info?.error?.code === -32016 ||
+          (error.code === 'CALL_EXCEPTION' && error.message?.includes('missing revert data'));
+
         if (isRateLimit && i < maxRetries - 1) {
           const waitTime = delay * (i + 1); // Увеличиваем задержку с каждой попыткой
           console.warn(`Rate limit, повтор через ${waitTime}ms (попытка ${i + 1}/${maxRetries})`);
@@ -135,51 +135,40 @@ class Web3Manager {
       console.log('Gas params (raw):', gasParams);
 
       // Используем актуальные сетевые параметры газа для всех сетей
-    const deployOptions = { ...gasParams };
-    // Убираем gasPrice если есть EIP-1559 параметры
-    if (deployOptions.maxFeePerGas && deployOptions.gasPrice) {
-      delete deployOptions.gasPrice;
-    }
-    console.log('Deploy gas params:', {
-      maxFeePerGas: deployOptions.maxFeePerGas ? `${ethers.formatUnits(deployOptions.maxFeePerGas, 'gwei')} gwei` : 'N/A',
-      maxPriorityFeePerGas: deployOptions.maxPriorityFeePerGas ? `${ethers.formatUnits(deployOptions.maxPriorityFeePerGas, 'gwei')} gwei` : 'N/A',
-      gasPrice: deployOptions.gasPrice ? `${ethers.formatUnits(deployOptions.gasPrice, 'gwei')} gwei` : 'N/A'
-    });
-
-      // Для Ethereum используем меньший gasLimit для экономии
-      // Для других сетей увеличиваем gasLimit для деплоя (контракт большой из-за viaIR)
-      let baseGasLimit;
-      if (this.currentNetwork === 'ETH') {
-        // Для Ethereum используем минимально необходимый gasLimit (контракт использует ~2.9M)
-        baseGasLimit = BigInt(3000000); // Немного больше реального использования (2.9M)
-      } else {
-        // Пробуем estimateGas для точного расчёта (особенно важно для L2 сетей как MegaETH)
-        try {
-          const wethForEstimate = await this.getWethAddress();
-          const MultiZapFactory = new ethers.ContractFactory(this.abi, this.bytecode, this.wallet);
-          const deployTx = await MultiZapFactory.getDeployTransaction(
-            ethers.getAddress(this.networkConfig.routerAddress),
-            ethers.getAddress(this.networkConfig.factoryAddress),
-            ethers.getAddress(this.networkConfig.usdtAddress),
-            wethForEstimate
-          );
-          const estimated = await this.provider.estimateGas({
-            from: this.wallet.address,
-            data: deployTx.data
-          });
-          // Добавляем 20% запас
-          baseGasLimit = estimated + (estimated / 5n);
-          console.log(`EstimateGas для деплоя: ${estimated.toString()}, с запасом: ${baseGasLimit.toString()}`);
-        } catch (estError) {
-          console.warn('⚠️ Не удалось estimateGas, используем расчётный лимит:', estError.message);
-          baseGasLimit = deployOptions.gasLimit 
-            ? (typeof deployOptions.gasLimit === 'string' ? BigInt(deployOptions.gasLimit) : deployOptions.gasLimit)
-            : BigInt(2000000);
-          // Увеличиваем gasLimit в 2 раза для деплоя (для других сетей)
-          baseGasLimit = baseGasLimit * 2n;
-        }
+      const deployOptions = { ...gasParams };
+      // Убираем gasPrice если есть EIP-1559 параметры
+      if (deployOptions.maxFeePerGas && deployOptions.gasPrice) {
+        delete deployOptions.gasPrice;
       }
-      
+      console.log('Deploy gas params:', {
+        maxFeePerGas: deployOptions.maxFeePerGas ? `${ethers.formatUnits(deployOptions.maxFeePerGas, 'gwei')} gwei` : 'N/A',
+        maxPriorityFeePerGas: deployOptions.maxPriorityFeePerGas ? `${ethers.formatUnits(deployOptions.maxPriorityFeePerGas, 'gwei')} gwei` : 'N/A',
+        gasPrice: deployOptions.gasPrice ? `${ethers.formatUnits(deployOptions.gasPrice, 'gwei')} gwei` : 'N/A'
+      });
+
+      // Используем estimateGas для точного расчёта gasLimit на всех сетях
+      let baseGasLimit;
+      try {
+        const wethForEstimate = await this.getWethAddress();
+        const MultiZapFactory = new ethers.ContractFactory(this.abi, this.bytecode, this.wallet);
+        const deployTx = await MultiZapFactory.getDeployTransaction(
+          ethers.getAddress(this.networkConfig.routerAddress),
+          ethers.getAddress(this.networkConfig.factoryAddress),
+          ethers.getAddress(this.networkConfig.usdtAddress),
+          wethForEstimate
+        );
+        const estimated = await this.provider.estimateGas({
+          from: this.wallet.address,
+          data: deployTx.data
+        });
+        // Добавляем 20% запас
+        baseGasLimit = estimated + (estimated / 5n);
+        console.log(`EstimateGas для деплоя: ${estimated.toString()}, с запасом: ${baseGasLimit.toString()}`);
+      } catch (estError) {
+        console.warn('⚠️ Не удалось estimateGas, используем расчётный лимит:', estError.message);
+        baseGasLimit = BigInt(4000000); // Fallback: 4M (контракт ~3.2M с новыми интерфейсами)
+      }
+
       deployOptions.gasLimit = baseGasLimit;
       console.log(`Gas limit для деплоя: ${deployOptions.gasLimit.toString()}`);
 
@@ -187,10 +176,10 @@ class Web3Manager {
       const routerAddr = ethers.getAddress(this.networkConfig.routerAddress);
       const factoryAddr = ethers.getAddress(this.networkConfig.factoryAddress);
       const usdtAddr = ethers.getAddress(this.networkConfig.usdtAddress);
-      
+
       // Определяем WETH адрес (роутеры могут использовать WETH() или WETH9())
       const wethAddr = await this.getWethAddress();
-      
+
       console.log('Проверка адресов:');
       console.log('  Router:', routerAddr);
       console.log('  Factory:', factoryAddr);
@@ -274,17 +263,17 @@ class Web3Manager {
         ['function getPair(address, address) view returns (address)'],
         this.provider
       );
-      
+
       const wethAddress = await this.getWethAddress();
       const baseTokenAddress = useUSDT ? (this.networkConfig.usdtAddress || ethers.ZeroAddress) : wethAddress;
-      
+
       if (useUSDT && baseTokenAddress === ethers.ZeroAddress) {
         throw new Error('USDT_ADDRESS_NOT_SET: Адрес USDT не настроен в конфигурации сети');
       }
-      
+
       const lpPair = await factoryContract.getPair(tokenAddress, baseTokenAddress);
       const baseTokenName = useUSDT ? 'USDT' : 'WETH/WBNB';
-      
+
       if (lpPair === ethers.ZeroAddress) {
         throw new Error(`LP_PAIR_NOT_FOUND: Для токена ${tokenAddress} не найдена LP пара с ${baseTokenName} (${baseTokenAddress}). Возможно, токен новый и пара еще не создана, или используется другой DEX. Попробуйте добавить токен вручную с указанием LP адреса.`);
       }
@@ -300,12 +289,12 @@ class Web3Manager {
     try {
       const gasParams = await this.getGasParams();
       const tx = await this.multiZapContract.addTokenAuto(tokenAddress, useUSDT, gasParams);
-      
+
       // Для Ethereum и Base используем более быструю проверку (1 подтверждение)
       // Для BSC можно использовать больше подтверждений
       const confirmations = this.networkConfig.supportsEIP1559 ? 1 : 1;
       await tx.wait(confirmations);
-      
+
       return tx.hash;
     } catch (error) {
       throw new Error(`Ошибка автоматического добавления токена: ${error.message}`);
@@ -420,10 +409,10 @@ class Web3Manager {
 
       // Проверяем баланс перед отправкой транзакции
       const balance = await this.provider.getBalance(this.wallet.address);
-      const estimatedGas = gasParams.gasLimit 
+      const estimatedGas = gasParams.gasLimit
         ? (typeof gasParams.gasLimit === 'string' ? BigInt(gasParams.gasLimit) : BigInt(gasParams.gasLimit))
         : BigInt(500000);
-      
+
       let estimatedGasCost;
       if (this.networkConfig.supportsEIP1559 && gasParams.maxFeePerGas) {
         estimatedGasCost = estimatedGas * gasParams.maxFeePerGas;
@@ -433,19 +422,19 @@ class Web3Manager {
         // Fallback оценка
         estimatedGasCost = estimatedGas * ethers.parseUnits('50', 'gwei');
       }
-      
+
       const totalNeeded = amountWei + estimatedGasCost;
-      
+
       if (balance < totalNeeded) {
         const balanceEth = ethers.formatEther(balance);
         const neededEth = ethers.formatEther(totalNeeded);
         throw new Error(`Недостаточно средств для транзакции. Баланс: ${balanceEth} ${this.networkConfig.nativeCurrency}, требуется: ${neededEth} ${this.networkConfig.nativeCurrency} (включая газ)`);
       }
-      
+
       console.log(`Gas params:`, gasParams);
       console.log(`Estimated gas cost: ${ethers.formatEther(estimatedGasCost)} ${this.networkConfig.nativeCurrency}`);
       console.log(`Total needed: ${ethers.formatEther(totalNeeded)} ${this.networkConfig.nativeCurrency}`);
-      
+
       // Отправляем транзакцию (ethers.js автоматически оценит газ)
       console.log('Отправка транзакции...');
       const tx = await this.multiZapContract.zapIn(
@@ -459,19 +448,19 @@ class Web3Manager {
         }
       );
       console.log(`Транзакция отправлена: ${tx.hash}`);
-      
+
       const receipt = await tx.wait();
-      
+
       // Проверяем статус транзакции
       if (receipt.status === 0) {
         throw new Error('Транзакция была отклонена контрактом. Возможные причины: токен не поддерживается, токен неактивен, недостаточно ликвидности в пуле.');
       }
-      
+
       return tx.hash;
     } catch (error) {
       // Улучшаем сообщение об ошибке
       let errorMessage = error.message || 'Неизвестная ошибка';
-      
+
       console.error('Детали ошибки zap-in:', {
         message: error.message,
         reason: error.reason,
@@ -479,25 +468,25 @@ class Web3Manager {
         data: error.data,
         error: error
       });
-      
+
       // Обработка специфических ошибок отправки транзакции
       if (error.code === 'UNKNOWN_ERROR' || error.message?.includes('failed to send tx') || error.message?.includes('could not coalesce')) {
         // Проверяем баланс и параметры газа
         try {
           const balance = await this.provider.getBalance(this.wallet.address);
           const balanceEth = ethers.formatEther(balance);
-          
+
           // Получаем текущие параметры газа
           const gasParams = await this.getGasParams();
           console.error('Gas params при ошибке:', gasParams);
-          
+
           if (this.networkConfig.supportsEIP1559) {
             if (!gasParams.maxFeePerGas || !gasParams.maxPriorityFeePerGas) {
               errorMessage = `Ошибка отправки транзакции: параметры газа для EIP-1559 не установлены. Попробуйте позже или проверьте RPC провайдер.`;
             } else {
               const maxFeeGwei = ethers.formatUnits(gasParams.maxFeePerGas, 'gwei');
               const priorityFeeGwei = ethers.formatUnits(gasParams.maxPriorityFeePerGas, 'gwei');
-              
+
               errorMessage = `Ошибка отправки транзакции. Возможные причины:\n` +
                 `• Недостаточно средств для оплаты газа (баланс: ${balanceEth} ${this.networkConfig.nativeCurrency})\n` +
                 `• Слишком низкий maxFeePerGas (${maxFeeGwei} gwei) - попробуйте позже\n` +
@@ -509,7 +498,7 @@ class Web3Manager {
               errorMessage = `Ошибка отправки транзакции: gasPrice не установлен. Попробуйте позже или проверьте RPC провайдер.`;
             } else {
               const gasPriceGwei = ethers.formatUnits(gasParams.gasPrice, 'gwei');
-              
+
               errorMessage = `Ошибка отправки транзакции. Возможные причины:\n` +
                 `• Недостаточно средств для оплаты газа (баланс: ${balanceEth} ${this.networkConfig.nativeCurrency})\n` +
                 `• Слишком низкий gasPrice (${gasPriceGwei} gwei) - попробуйте позже\n` +
@@ -521,7 +510,7 @@ class Web3Manager {
           errorMessage = `Ошибка отправки транзакции: ${error.message}. Не удалось проверить баланс: ${balanceError.message}`;
         }
       }
-      
+
       // Парсим ошибки из контракта
       if (errorMessage.includes('TOKEN_NOT_SUPPORTED') || errorMessage.includes('token not supported')) {
         errorMessage = 'Токен не добавлен в контракт. Сначала добавьте токен через /addtoken';
@@ -554,7 +543,7 @@ class Web3Manager {
         // Если есть data.message, используем его
         errorMessage = error.data.message;
       }
-      
+
       throw new Error(`Ошибка zap-in: ${errorMessage}`);
     }
   }
@@ -584,7 +573,7 @@ class Web3Manager {
     const baseToken = tokenInfo.baseToken;
     console.log(`Сохраненный LP токен в контракте: ${storedLpToken}`);
     console.log(`Base token (тип пары): ${baseToken}`);
-    
+
     // Проверяем, что baseToken установлен (для старых токенов может быть address(0))
     if (!baseToken || baseToken === ethers.ZeroAddress) {
       throw new Error('BASE_TOKEN_NOT_SET: Токен был добавлен до обновления контракта. Пожалуйста, удалите токен и добавьте его заново через /addtoken с указанием типа пары (WBNB или USDT).');
@@ -595,17 +584,17 @@ class Web3Manager {
       // Получаем Factory адрес из контракта
       const contractFactoryAddress = await this.retryCall(() => this.multiZapContract.factory());
       const configFactoryAddress = this.networkConfig.factoryAddress;
-      
+
       console.log(`Factory адрес в контракте: ${contractFactoryAddress}`);
       console.log(`Factory адрес в конфиге: ${configFactoryAddress}`);
-      
+
       // Если Factory адреса не совпадают, это может быть проблемой
       if (contractFactoryAddress.toLowerCase() !== configFactoryAddress.toLowerCase()) {
         console.warn(`⚠️ ВНИМАНИЕ: Factory в контракте (${contractFactoryAddress}) отличается от Factory в конфиге (${configFactoryAddress})`);
         console.warn(`Это может означать, что контракт был развернут с другим Factory.`);
         console.warn(`Токены, добавленные через addTokenAuto(), используют Factory из контракта.`);
       }
-      
+
       // Получаем WETH адрес
       const routerContract = new ethers.Contract(
         this.networkConfig.routerAddress,
@@ -613,7 +602,7 @@ class Web3Manager {
         this.provider
       );
       const wethAddress = await routerContract.WETH();
-      
+
       // Проверяем LP пару через Factory из контракта (который используется при addTokenAuto)
       const contractFactory = new ethers.Contract(
         contractFactoryAddress,
@@ -621,7 +610,7 @@ class Web3Manager {
         this.provider
       );
       const lpTokenFromContractFactory = await contractFactory.getPair(tokenAddress, wethAddress);
-      
+
       // Также проверяем через Factory из конфига
       const configFactory = new ethers.Contract(
         configFactoryAddress,
@@ -629,27 +618,27 @@ class Web3Manager {
         this.provider
       );
       const lpTokenFromConfigFactory = await configFactory.getPair(tokenAddress, wethAddress);
-      
+
       console.log(`LP токен из Factory контракта: ${lpTokenFromContractFactory}`);
       console.log(`LP токен из Factory конфига: ${lpTokenFromConfigFactory}`);
       console.log(`Сохраненный LP токен в контракте: ${storedLpToken}`);
-      
+
       // Проверяем соответствие
       const storedLpLower = storedLpToken.toLowerCase();
       const contractFactoryLpLower = lpTokenFromContractFactory.toLowerCase();
       const configFactoryLpLower = lpTokenFromConfigFactory.toLowerCase();
-      
+
       // Если LP токен из Factory контракта не совпадает с сохраненным
       if (lpTokenFromContractFactory !== ethers.ZeroAddress && contractFactoryLpLower !== storedLpLower) {
         console.warn(`⚠️ ВНИМАНИЕ: Сохраненный LP токен (${storedLpToken}) не совпадает с LP токеном из Factory контракта (${lpTokenFromContractFactory})`);
         console.warn(`Возможно, токен был добавлен вручную с неправильным LP адресом.`);
       }
-      
+
       // Если Factory адреса разные и LP токены тоже разные
-      if (contractFactoryAddress.toLowerCase() !== configFactoryAddress.toLowerCase() && 
-          lpTokenFromContractFactory !== ethers.ZeroAddress && 
-          lpTokenFromConfigFactory !== ethers.ZeroAddress &&
-          contractFactoryLpLower !== configFactoryLpLower) {
+      if (contractFactoryAddress.toLowerCase() !== configFactoryAddress.toLowerCase() &&
+        lpTokenFromContractFactory !== ethers.ZeroAddress &&
+        lpTokenFromConfigFactory !== ethers.ZeroAddress &&
+        contractFactoryLpLower !== configFactoryLpLower) {
         console.warn(`⚠️ КРИТИЧЕСКОЕ ВНИМАНИЕ: Разные Factory дают разные LP токены!`);
         console.warn(`Это может быть причиной ошибки продажи.`);
         console.warn(`Рекомендуется использовать токены, добавленные через addTokenAuto() с правильным Factory.`);
@@ -659,24 +648,24 @@ class Web3Manager {
       // Продолжаем - возможно это rate limit
     }
 
-      // Проверяем баланс LP перед продажей
+    // Проверяем баланс LP перед продажей
     let factoryMismatchWarning = null;
     try {
       const contractFactoryAddress = await this.retryCall(() => this.multiZapContract.factory()).catch(() => null);
       const configFactoryAddress = this.networkConfig.factoryAddress;
-      
+
       if (contractFactoryAddress && contractFactoryAddress.toLowerCase() !== configFactoryAddress.toLowerCase()) {
         factoryMismatchWarning = `⚠️ Factory в контракте отличается от Factory в конфиге. Это может быть причиной ошибки продажи.`;
       }
     } catch (e) {
       // Игнорируем ошибку получения Factory
     }
-    
+
     try {
       const lpBalance = await this.retryCall(() => this.multiZapContract.getLpBalance(tokenAddress));
       const lpBalanceFormatted = ethers.formatEther(lpBalance);
       const lpBalanceNum = parseFloat(lpBalanceFormatted);
-      
+
       if (lpBalanceNum === 0 || lpBalance === 0n) {
         let errorMsg = 'NO_LP_BALANCE: У вас нет LP токенов для продажи. Баланс LP: 0';
         if (factoryMismatchWarning) {
@@ -684,7 +673,7 @@ class Web3Manager {
         }
         throw new Error(errorMsg);
       }
-      
+
       console.log(`LP баланс перед продажей: ${lpBalanceFormatted}`);
       console.log(`LP токен адрес: ${storedLpToken}`);
     } catch (error) {
@@ -712,16 +701,16 @@ class Web3Manager {
         0, // amountOutMinBNB - 0 для максимальной гибкости
         gasParams
       );
-      
+
       // Ждем подтверждения транзакции
       const receipt = await tx.wait();
-      
+
       // Проверяем статус транзакции
       if (receipt.status === 0) {
         // Транзакция была отклонена
         // Пытаемся понять причину
         let errorDetails = [];
-        
+
         try {
           const lpBalance = await this.retryCall(() => this.multiZapContract.getLpBalance(tokenAddress)).catch(() => 0n);
           if (lpBalance === 0n) {
@@ -730,7 +719,7 @@ class Web3Manager {
         } catch (e) {
           // Игнорируем ошибку проверки баланса
         }
-        
+
         try {
           const tokenInfo = await this.retryCall(() => this.multiZapContract.getTokenInfo(tokenAddress)).catch(() => null);
           if (tokenInfo && (!tokenInfo.baseToken || tokenInfo.baseToken === ethers.ZeroAddress)) {
@@ -742,17 +731,17 @@ class Web3Manager {
         } catch (e) {
           // Игнорируем ошибку получения информации
         }
-        
+
         let errorMsg = 'Транзакция была отклонена контрактом.';
         if (errorDetails.length > 0) {
           errorMsg += '\n\nВозможные причины:\n• ' + errorDetails.join('\n• ');
         } else {
           errorMsg += '\n\nВозможные причины:\n• Нет LP токенов для продажи\n• Недостаточно ликвидности в пуле\n• Токен неактивен\n• Токен был добавлен до обновления контракта (baseToken не установлен)';
         }
-        
+
         throw new Error(errorMsg);
       }
-      
+
       return tx.hash;
     } catch (error) {
       // Улучшаем сообщение об ошибке
@@ -820,16 +809,16 @@ class Web3Manager {
       }
       percentInt = Math.floor(percentInt);
     }
-    
+
     // Проверяем, что percentInt - это целое число от 1 до 100
     if (isNaN(percentInt) || !Number.isInteger(percentInt) || percentInt < 1 || percentInt > 100) {
       throw new Error(`Неверный процент: ${percentInt} (исходный: ${percent}, тип: ${typeof percent}). Доступные значения: 5, 25, 50, 75`);
     }
-    
+
     if (![5, 25, 50, 75].includes(percentInt)) {
       throw new Error(`Неверный процент: ${percentInt} (исходный: ${percent}). Доступные значения: 5, 25, 50, 75`);
     }
-    
+
     console.log(`exitAndSellPartial: percent=${percent} (тип: ${typeof percent}), percentInt=${percentInt} (тип: ${typeof percentInt}, isInteger: ${Number.isInteger(percentInt)})`);
 
     // Получаем информацию о токене из контракта
@@ -845,7 +834,7 @@ class Web3Manager {
     }
 
     const baseToken = tokenInfo.baseToken;
-    
+
     // Проверяем, что baseToken установлен
     if (!baseToken || baseToken === ethers.ZeroAddress) {
       throw new Error('BASE_TOKEN_NOT_SET: Токен был добавлен до обновления контракта. Пожалуйста, удалите токен и добавьте его заново через /addtoken с указанием типа пары (WBNB или USDT).');
@@ -866,13 +855,13 @@ class Web3Manager {
     // Вычисляем количество LP токенов для продажи
     // Убеждаемся, что percentInt - это целое число перед конвертацией в BigInt
     const percentForCalculation = Number.isInteger(percentInt) ? percentInt : Math.floor(Number(percentInt));
-    
+
     if (!Number.isInteger(percentForCalculation) || percentForCalculation < 1 || percentForCalculation > 100) {
       throw new Error(`Неверный процент для вычислений: ${percentForCalculation} (исходный: ${percent}, тип: ${typeof percent})`);
     }
-    
+
     console.log(`Вычисление lpToSell: lpBalance=${lpBalance}, percentForCalculation=${percentForCalculation} (тип: ${typeof percentForCalculation})`);
-    
+
     // Используем percentForCalculation для вычислений
     const lpToSell = (lpBalance * BigInt(percentForCalculation)) / 100n;
     if (lpToSell === 0n) {
@@ -883,12 +872,12 @@ class Web3Manager {
     // Используем getGasParams() для правильной обработки EIP-1559 (Ethereum, Base)
     // Это важно, так как для Ethereum и Base gasPrice может быть null
     const gasParams = await this.getGasParams();
-    
+
     // Увеличиваем gasLimit для частичной продажи
-    const baseGasLimit = gasParams.gasLimit 
+    const baseGasLimit = gasParams.gasLimit
       ? (typeof gasParams.gasLimit === 'string' ? BigInt(gasParams.gasLimit) : BigInt(gasParams.gasLimit))
       : BigInt(500000);
-    
+
     // Обновляем gasLimit в gasParams
     if (this.networkConfig.supportsEIP1559) {
       gasParams.gasLimit = baseGasLimit;
@@ -903,21 +892,21 @@ class Web3Manager {
       if (!Number.isInteger(percentNumber) || percentNumber < 1 || percentNumber > 100) {
         throw new Error(`Неверный процент для контракта: ${percentNumber} (тип: ${typeof percentNumber})`);
       }
-      
+
       // Убеждаемся, что это именно целое число, а не дробное
       const percentForContract = Math.floor(percentNumber);
-      
+
       if (percentForContract !== percentNumber) {
         throw new Error(`Процент должен быть целым числом, получено: ${percentNumber}`);
       }
-      
+
       // Проверяем, что это одно из допустимых значений
       if (![5, 25, 50, 75].includes(percentForContract)) {
         throw new Error(`Неверный процент: ${percentForContract}. Доступные значения: 5, 25, 50, 75`);
       }
-      
+
       console.log(`Вызов exitAndSellPartial с параметрами: tokenAddress=${tokenAddress}, percent=${percentForContract} (тип: ${typeof percentForContract}, isInteger: ${Number.isInteger(percentForContract)})`);
-      
+
       const tx = await this.multiZapContract.exitAndSellPartial(
         tokenAddress,
         percentForContract, // Явно передаем целое число
@@ -926,18 +915,18 @@ class Web3Manager {
         0, // amountOutMinBNB - 0 для максимальной гибкости
         gasParams
       );
-      
+
       // Ждем подтверждения транзакции
       // Для Ethereum и Base используем 1 подтверждение для ускорения
       // Для BSC можно использовать больше подтверждений
       const confirmations = this.networkConfig.supportsEIP1559 ? 1 : 1;
       const receipt = await tx.wait(confirmations);
-      
+
       // Проверяем статус транзакции
       if (receipt.status === 0) {
         throw new Error('Транзакция была отклонена контрактом');
       }
-      
+
       return tx.hash;
     } catch (error) {
       // Улучшаем сообщение об ошибке
@@ -1077,7 +1066,7 @@ class Web3Manager {
   async getGasParams() {
     try {
       const feeData = await this.provider.getFeeData();
-      
+
       // Если сеть поддерживает EIP-1559, используем maxFeePerGas и maxPriorityFeePerGas
       if (this.networkConfig.supportsEIP1559) {
         // Для Ethereum и Base используем динамические значения из сети
@@ -1086,7 +1075,7 @@ class Web3Manager {
           const maxFeePerGas = feeData.maxFeePerGas + (feeData.maxFeePerGas / 2n);
           // Увеличиваем maxPriorityFeePerGas на 30% для более быстрого включения в блок
           const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas + (feeData.maxPriorityFeePerGas * 3n / 10n);
-          
+
           return {
             maxFeePerGas: maxFeePerGas,
             maxPriorityFeePerGas: maxPriorityFeePerGas,
@@ -1096,7 +1085,7 @@ class Web3Manager {
           // Fallback для EIP-1559 сетей, если не получили данные
           // Используем разумные значения по умолчанию для каждой сети
           let defaultMaxFeePerGas, defaultMaxPriorityFeePerGas;
-          
+
           if (this.currentNetwork === 'MEGAETH') {
             // MegaETH: очень низкие комиссии (OP Stack, base fee ~0.001 gwei)
             defaultMaxFeePerGas = ethers.parseUnits('0.1', 'gwei'); // 0.1 gwei
@@ -1105,7 +1094,7 @@ class Web3Manager {
             defaultMaxFeePerGas = ethers.parseUnits('50', 'gwei'); // 50 gwei
             defaultMaxPriorityFeePerGas = ethers.parseUnits('2', 'gwei'); // 2 gwei
           }
-          
+
           console.warn('⚠️ Не удалось получить feeData для EIP-1559, используем значения по умолчанию');
           return {
             maxFeePerGas: defaultMaxFeePerGas,
@@ -1114,11 +1103,11 @@ class Web3Manager {
           };
         }
       }
-      
+
       // Для сетей без EIP-1559 (например, BSC) используем gasPrice из конфига
       const gasPriceConfig = this.networkConfig.gasPrice;
       let gasPrice;
-      
+
       if (gasPriceConfig) {
         gasPrice = ethers.parseUnits(gasPriceConfig.toString(), 'gwei');
       } else if (feeData.gasPrice) {
@@ -1127,22 +1116,22 @@ class Web3Manager {
         // Fallback для сетей без EIP-1559
         gasPrice = ethers.parseUnits('0.05', 'gwei');
       }
-      
+
       console.log(`Gas price из конфига: ${gasPriceConfig || 'auto'} gwei`);
       console.log(`Gas price в wei: ${gasPrice.toString()}`);
-      
+
       return {
         gasPrice: gasPrice,
         gasLimit: this.networkConfig.gasLimit || '2000000'
       };
     } catch (error) {
       console.error('Ошибка получения газовых параметров:', error);
-      
+
       // Fallback значения в зависимости от типа сети
       if (this.networkConfig.supportsEIP1559) {
         // Для EIP-1559 сетей используем maxFeePerGas и maxPriorityFeePerGas
         let defaultMaxFeePerGas, defaultMaxPriorityFeePerGas;
-        
+
         if (this.currentNetwork === 'MEGAETH') {
           defaultMaxFeePerGas = ethers.parseUnits('0.1', 'gwei');
           defaultMaxPriorityFeePerGas = ethers.parseUnits('0.01', 'gwei');
@@ -1150,9 +1139,9 @@ class Web3Manager {
           defaultMaxFeePerGas = ethers.parseUnits('50', 'gwei');
           defaultMaxPriorityFeePerGas = ethers.parseUnits('2', 'gwei');
         }
-        
+
         console.log(`Fallback для EIP-1559: maxFeePerGas=${defaultMaxFeePerGas}, maxPriorityFeePerGas=${defaultMaxPriorityFeePerGas}`);
-        
+
         return {
           maxFeePerGas: defaultMaxFeePerGas,
           maxPriorityFeePerGas: defaultMaxPriorityFeePerGas,
@@ -1162,10 +1151,10 @@ class Web3Manager {
         // Для сетей без EIP-1559 используем gasPrice
         const gasPriceConfig = this.networkConfig.gasPrice || '0.05';
         const gasPrice = ethers.parseUnits(gasPriceConfig.toString(), 'gwei');
-        
+
         console.log(`Fallback gas price из конфига: ${gasPriceConfig} gwei`);
         console.log(`Fallback gas price в wei: ${gasPrice.toString()}`);
-        
+
         return {
           gasPrice: gasPrice,
           gasLimit: this.networkConfig.gasLimit || '2000000'
@@ -1184,7 +1173,7 @@ class Web3Manager {
    */
   async getWethAddress() {
     const routerAddr = this.networkConfig.routerAddress;
-    
+
     // Сначала пробуем WETH() (стандарт Uniswap V2)
     try {
       const routerWETH = new ethers.Contract(
@@ -1200,7 +1189,7 @@ class Web3Manager {
     } catch (e) {
       // WETH() не поддерживается, пробуем WETH9()
     }
-    
+
     // Затем пробуем WETH9() (Kumbaya, некоторые V3 роутеры)
     try {
       const routerWETH9 = new ethers.Contract(
@@ -1216,14 +1205,14 @@ class Web3Manager {
     } catch (e) {
       // WETH9() тоже не поддерживается
     }
-    
+
     // Fallback: используем известный WETH адрес для OP Stack сетей
     if (this.currentNetwork === 'MEGAETH' || this.currentNetwork === 'BASE') {
       const fallbackWeth = '0x4200000000000000000000000000000000000006';
       console.log(`WETH адрес (fallback для ${this.currentNetwork}): ${fallbackWeth}`);
       return fallbackWeth;
     }
-    
+
     throw new Error('Не удалось определить WETH адрес роутера');
   }
 
@@ -1244,15 +1233,15 @@ class Web3Manager {
     if (this.nativePriceCache.price && (now - this.nativePriceCache.timestamp) < this.nativePriceCache.ttl) {
       return this.nativePriceCache.price;
     }
-    
+
     try {
       // Получаем адрес WBNB/WETH для текущей сети
       const routerContract = new ethers.Contract(this.networkConfig.routerAddress, [
         'function WETH() external pure returns (address)'
       ], this.provider);
-      
+
       const wethAddress = await this.retryCall(() => routerContract.WETH());
-      
+
       // Получаем цену нативной валюты через DEXScreener
       const chainIdMap = {
         'ETH': 'ethereum',
@@ -1261,60 +1250,60 @@ class Web3Manager {
         'MONAD': 'monad',
         'MEGAETH': 'megaeth'
       };
-      
+
       const chainId = chainIdMap[this.currentNetwork] || 'bsc';
       const url = `https://api.dexscreener.com/latest/dex/tokens/${wethAddress}`;
-      
+
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`DEXScreener API returned status ${response.status}`);
       }
-      
+
       const data = await response.json();
-      
+
       if (!data.pairs || data.pairs.length === 0) {
         throw new Error('No pairs found for native currency');
       }
-      
+
       // Находим пару с наибольшей ликвидностью для текущей сети
       const pairsForNetwork = data.pairs.filter(pair => {
         const pairChainId = pair.chainId?.toLowerCase();
-        return pairChainId === chainId || 
-               (chainId === 'bsc' && pairChainId === 'binance') ||
-               (chainId === 'ethereum' && pairChainId === 'eth');
+        return pairChainId === chainId ||
+          (chainId === 'bsc' && pairChainId === 'binance') ||
+          (chainId === 'ethereum' && pairChainId === 'eth');
       });
-      
+
       if (pairsForNetwork.length === 0) {
         throw new Error('No pair found for current network');
       }
-      
+
       // Сортируем по ликвидности
       const bestPair = pairsForNetwork.sort((a, b) => {
         const liquidityA = parseFloat(a.liquidity?.usd || 0);
         const liquidityB = parseFloat(b.liquidity?.usd || 0);
         return liquidityB - liquidityA;
       })[0];
-      
+
       const priceUsd = parseFloat(bestPair.priceUsd || 0);
-      
+
       if (!priceUsd || priceUsd === 0) {
         throw new Error('Invalid price from DEXScreener');
       }
-      
+
       // Сохраняем в кэш
       this.nativePriceCache.price = priceUsd;
       this.nativePriceCache.timestamp = Date.now();
-      
+
       return priceUsd;
     } catch (error) {
       console.error(`Ошибка получения цены ${this.networkConfig.nativeCurrency} через DEXScreener:`, error);
-      
+
       // Если есть кэш, используем его даже если он старый
       if (this.nativePriceCache.price) {
         console.log(`Используем кэшированную цену ${this.networkConfig.nativeCurrency}: ${this.nativePriceCache.price}`);
         return this.nativePriceCache.price;
       }
-      
+
       // Fallback значения
       switch (this.currentNetwork) {
         case 'BSC':
@@ -1339,47 +1328,47 @@ class Web3Manager {
         'MONAD': 'monad',
         'MEGAETH': 'megaeth'
       };
-      
+
       const chainId = chainIdMap[this.currentNetwork] || 'bsc';
       const url = `https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`;
-      
+
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`DEXScreener API returned status ${response.status}`);
       }
-      
+
       const data = await response.json();
-      
+
       if (!data.pairs || data.pairs.length === 0) {
         throw new Error('No pairs found for token');
       }
-      
+
       // Находим пару с наибольшей ликвидностью для текущей сети
       const pairsForNetwork = data.pairs.filter(pair => {
         const pairChainId = pair.chainId?.toLowerCase();
-        return pairChainId === chainId || 
-               (chainId === 'bsc' && pairChainId === 'binance') ||
-               (chainId === 'ethereum' && pairChainId === 'eth');
+        return pairChainId === chainId ||
+          (chainId === 'bsc' && pairChainId === 'binance') ||
+          (chainId === 'ethereum' && pairChainId === 'eth');
       });
-      
+
       if (pairsForNetwork.length === 0) {
         throw new Error('No pair found for current network');
       }
-      
+
       // Сортируем по ликвидности
       const bestPair = pairsForNetwork.sort((a, b) => {
         const liquidityA = parseFloat(a.liquidity?.usd || 0);
         const liquidityB = parseFloat(b.liquidity?.usd || 0);
         return liquidityB - liquidityA;
       })[0];
-      
+
       const priceUsd = parseFloat(bestPair.priceUsd || 0);
       const priceNative = parseFloat(bestPair.priceNative || 0);
-      
+
       if (!priceUsd || priceUsd === 0) {
         throw new Error('Invalid price from DEXScreener');
       }
-      
+
       // Получаем базовую информацию о токене из блокчейна
       const tokenContract = new ethers.Contract(tokenAddress, [
         'function decimals() view returns (uint8)',
@@ -1387,17 +1376,17 @@ class Web3Manager {
         'function name() view returns (string)',
         'function totalSupply() view returns (uint256)'
       ], this.provider);
-      
+
       const [decimals, symbol, name, totalSupply] = await Promise.all([
         this.retryCall(() => tokenContract.decimals()).catch(() => 18),
         this.retryCall(() => tokenContract.symbol()).catch(() => bestPair.baseToken?.symbol || 'UNKNOWN'),
         this.retryCall(() => tokenContract.name()).catch(() => bestPair.baseToken?.name || 'Unknown Token'),
         this.retryCall(() => tokenContract.totalSupply()).catch(() => 0n)
       ]);
-      
+
       const formattedSupply = ethers.formatUnits(totalSupply, decimals);
       const marketCapInUsd = priceUsd * parseFloat(formattedSupply);
-      
+
       // Получаем цену нативной валюты для отображения
       // Если priceNative есть из DEXScreener, вычисляем цену нативной валюты из него
       let nativePriceInUsd;
@@ -1419,7 +1408,7 @@ class Web3Manager {
           }
         });
       }
-      
+
       return {
         price: priceNative || (priceUsd / nativePriceInUsd), // Цена в нативной валюте
         priceUsd: priceUsd,
@@ -1443,7 +1432,7 @@ class Web3Manager {
     if (dexscreenerPrice) {
       return dexscreenerPrice;
     }
-    
+
     // Fallback на старый метод через блокчейн
     try {
       const tokenContract = new ethers.Contract(tokenAddress, [
@@ -1503,7 +1492,7 @@ class Web3Manager {
             return 3000;
         }
       });
-      
+
       return {
         price: 0,
         priceUsd: 0,
