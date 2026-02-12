@@ -281,29 +281,37 @@ contract MultiZap is Ownable {
             uint half = msg.value / 2;
             uint otherHalf = msg.value - half;
 
-            // Получаем адрес LP пары
-            address lpPair = factory.getPair(_token, wbnb);
-            require(lpPair != address(0), "LP_PAIR_NOT_FOUND");
-
             address[] memory path = new address[](2);
             path[0] = wbnb;
             path[1] = _token;
 
-            // Свопаем половину ETH НАПРЯМУЮ В LP ПАРУ (минуя наш контракт)
-            // Это обходит anti-bot логику токенов, которая блокирует transferFrom из контрактов
+            // Запоминаем баланс ДО свопа
+            uint tokenBalBefore = IERC20(_token).balanceOf(address(this));
+
+            // Свопаем половину ETH на токены
             router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: half}(
                 amountOutMinToken,
                 path,
-                lpPair,  // токены идут сразу в пару, не в наш контракт
+                address(this),
                 block.timestamp + 300
             );
 
-            // Оборачиваем вторую половину ETH в WETH и отправляем в пару
-            IWETH(wbnb).deposit{value: otherHalf}();
-            IWETH(wbnb).transfer(lpPair, otherHalf);
+            // Дельта — только свежеполученные токены
+            uint tokenBal = IERC20(_token).balanceOf(address(this)) - tokenBalBefore;
+            require(tokenBal > 0, "NO_TOKENS_RECEIVED");
 
-            // Минтим LP токены
-            IUniswapV2Pair(lpPair).mint(address(this));
+            // Даем максимальный approve роутеру (обход проблем с allowance)
+            IERC20(_token).forceApprove(address(router), type(uint256).max);
+
+            // Добавляем ликвидность через Router
+            router.addLiquidityETH{value: otherHalf}(
+                _token,
+                tokenBal,
+                0,  // amountTokenMin = 0 для гибкости (sell-hook может изменить баланс)
+                0,  // amountETHMin = 0 для гибкости
+                address(this),
+                block.timestamp + 300
+            );
         } else {
             // USDT пара - новая логика
             require(baseToken == usdtAddress, "INVALID_BASE_TOKEN");
