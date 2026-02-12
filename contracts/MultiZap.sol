@@ -94,6 +94,19 @@ interface IUniswapV2Factory {
     function getPair(address tokenA, address tokenB) external view returns (address pair);
 }
 
+interface IWETH {
+    function deposit() external payable;
+    function transfer(address to, uint value) external returns (bool);
+    function withdraw(uint) external;
+    function balanceOf(address) external view returns (uint);
+}
+
+interface IUniswapV2Pair {
+    function mint(address to) external returns (uint liquidity);
+    function token0() external view returns (address);
+    function token1() external view returns (address);
+}
+
 contract MultiZap is Ownable {
     using SafeERC20 for IERC20;
 
@@ -272,7 +285,10 @@ contract MultiZap is Ownable {
             path[0] = wbnb;
             path[1] = _token;
 
-            // Сначала свопаем половину BNB на токены
+            // Запоминаем баланс ДО свопа (чтобы не учитывать остатки от прошлых операций)
+            uint tokenBalBefore = IERC20(_token).balanceOf(address(this));
+
+            // Сначала свопаем половину ETH/BNB на токены
             router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: half}(
                 amountOutMinToken,
                 path,
@@ -280,26 +296,31 @@ contract MultiZap is Ownable {
                 block.timestamp + 300
             );
 
-            // Получаем баланс токенов после свопа
-            uint tokenBal = IERC20(_token).balanceOf(address(this));
+            // Вычисляем ТОЛЬКО количество полученных от свопа токенов (дельта)
+            uint tokenBal = IERC20(_token).balanceOf(address(this)) - tokenBalBefore;
             require(tokenBal > 0, "NO_TOKENS_RECEIVED");
 
-            // Даем разрешение роутеру на использование токенов
-            IERC20(_token).forceApprove(address(router), tokenBal);
+            // Получаем адрес LP пары
+            address lpPair = factory.getPair(_token, wbnb);
+            require(lpPair != address(0), "LP_PAIR_NOT_FOUND");
 
-            // Добавляем ликвидность
-            router.addLiquidityETH{value: otherHalf}(
-                _token,
-                tokenBal,
-                amountTokenMin,
-                amountBNBMin,
-                address(this),
-                block.timestamp + 300
-            );
+            // Обходим Router чтобы избежать re-entrancy с токенами, 
+            // которые вызывают swap внутри _transfer (anti-bot логика)
+            // 1. Оборачиваем ETH в WETH
+            IWETH(wbnb).deposit{value: otherHalf}();
+            // 2. Переводим токены напрямую в пару
+            IERC20(_token).safeTransfer(lpPair, tokenBal);
+            // 3. Переводим WETH напрямую в пару
+            IWETH(wbnb).transfer(lpPair, otherHalf);
+            // 4. Минтим LP токены
+            IUniswapV2Pair(lpPair).mint(address(this));
         } else {
             // USDT пара - новая логика
             require(baseToken == usdtAddress, "INVALID_BASE_TOKEN");
             
+            // Запоминаем балансы ДО свопа
+            uint usdtBalBefore = IERC20(usdtAddress).balanceOf(address(this));
+
             // Свопаем весь BNB на USDT
             address[] memory pathBNBtoUSDT = new address[](2);
             pathBNBtoUSDT[0] = wbnb;
@@ -312,11 +333,15 @@ contract MultiZap is Ownable {
                 block.timestamp + 300
             );
 
-            uint usdtBal = IERC20(usdtAddress).balanceOf(address(this));
+            // Вычисляем ТОЛЬКО полученные от свопа USDT (дельта)
+            uint usdtBal = IERC20(usdtAddress).balanceOf(address(this)) - usdtBalBefore;
             require(usdtBal > 0, "NO_USDT_RECEIVED");
 
             uint halfUSDT = usdtBal / 2;
             uint otherHalfUSDT = usdtBal - halfUSDT;
+
+            // Запоминаем баланс токена ДО свопа
+            uint tokenBalBefore = IERC20(_token).balanceOf(address(this));
 
             // Свопаем половину USDT на токен
             address[] memory pathUSDTtoToken = new address[](2);
@@ -332,7 +357,8 @@ contract MultiZap is Ownable {
                 block.timestamp + 300
             );
 
-            uint tokenBal = IERC20(_token).balanceOf(address(this));
+            // Вычисляем ТОЛЬКО полученные от свопа токены (дельта)
+            uint tokenBal = IERC20(_token).balanceOf(address(this)) - tokenBalBefore;
             require(tokenBal > 0, "NO_TOKENS_RECEIVED");
 
             // Добавляем ликвидность Token/USDT
@@ -414,6 +440,9 @@ contract MultiZap is Ownable {
 
         if (baseToken == wbnb) {
             // WBNB пара - существующая логика
+            // Запоминаем баланс токена ДО удаления ликвидности
+            uint tokenBalBefore = IERC20(_token).balanceOf(address(this));
+
             // Удаляем ликвидность
             router.removeLiquidityETHSupportingFeeOnTransferTokens(
                 _token,
@@ -424,8 +453,8 @@ contract MultiZap is Ownable {
                 block.timestamp + 300
             );
 
-            // Получаем баланс токенов после удаления ликвидности
-            uint tokenBal = IERC20(_token).balanceOf(address(this));
+            // Вычисляем ТОЛЬКО полученные от удаления ликвидности токены (дельта)
+            uint tokenBal = IERC20(_token).balanceOf(address(this)) - tokenBalBefore;
             if (tokenBal > 0) {
                 address[] memory path = new address[](2);
                 path[0] = _token;
@@ -470,11 +499,12 @@ contract MultiZap is Ownable {
                 amountBMin = amountTokenMin;  // Для токена
             }
 
-            // LP токен уже проверен и установлен выше, используем его
+            // Запоминаем балансы ДО удаления ликвидности
+            uint tokenBalBefore = IERC20(_token).balanceOf(address(this));
+            uint usdtBalBefore = IERC20(usdtAddress).balanceOf(address(this));
 
             // Удаляем ликвидность с правильным порядком токенов
-            // Для USDT пар используем обычный removeLiquidity, так как USDT не имеет fee-on-transfer
-            // Это более надежно и работает быстрее
+            // Для USDT пар используем обычный removeLiquidity
             router.removeLiquidity(
                 tokenA,
                 tokenB,
@@ -485,13 +515,11 @@ contract MultiZap is Ownable {
                 block.timestamp + 300
             );
 
-            // Проверяем балансы после удаления ликвидности
-            // Важно: проверяем балансы сразу после removeLiquidity
-            uint tokenBal = IERC20(_token).balanceOf(address(this));
-            uint usdtBal = IERC20(usdtAddress).balanceOf(address(this));
+            // Вычисляем ТОЛЬКО полученные от удаления ликвидности (дельта)
+            uint tokenBal = IERC20(_token).balanceOf(address(this)) - tokenBalBefore;
+            uint usdtBal = IERC20(usdtAddress).balanceOf(address(this)) - usdtBalBefore;
 
             // Если оба баланса равны 0, значит removeLiquidity не сработал
-            // Это может быть из-за неправильного LP токена или недостаточной ликвидности
             if (tokenBal == 0 && usdtBal == 0) {
                 revert("NO_LIQUIDITY_RECEIVED_AFTER_REMOVE");
             }
@@ -511,8 +539,8 @@ contract MultiZap is Ownable {
                     block.timestamp + 300
                 );
                 
-                // Обновляем баланс USDT после свопа
-                usdtBal = IERC20(usdtAddress).balanceOf(address(this));
+                // Обновляем баланс USDT после свопа (дельта от первоначального)
+                usdtBal = IERC20(usdtAddress).balanceOf(address(this)) - usdtBalBefore;
             }
 
             // Свопаем весь USDT на BNB
@@ -594,7 +622,10 @@ contract MultiZap is Ownable {
         IERC20(lpToken).forceApprove(address(router), lpToSell);
 
         if (baseToken == wbnb) {
-            // WBNB пара - существующая логика
+            // WBNB пара
+            // Запоминаем баланс токена ДО удаления ликвидности
+            uint tokenBalBefore = IERC20(_token).balanceOf(address(this));
+
             router.removeLiquidityETHSupportingFeeOnTransferTokens(
                 _token,
                 lpToSell,
@@ -604,8 +635,8 @@ contract MultiZap is Ownable {
                 block.timestamp + 300
             );
 
-            // Получаем баланс токенов после удаления ликвидности
-            uint tokenBal = IERC20(_token).balanceOf(address(this));
+            // Вычисляем ТОЛЬКО полученные от удаления ликвидности токены (дельта)
+            uint tokenBal = IERC20(_token).balanceOf(address(this)) - tokenBalBefore;
             if (tokenBal > 0) {
                 address[] memory path = new address[](2);
                 path[0] = _token;
@@ -649,6 +680,10 @@ contract MultiZap is Ownable {
                 amountBMin = amountTokenMin;
             }
 
+            // Запоминаем балансы ДО удаления ликвидности
+            uint tokenBalBefore = IERC20(_token).balanceOf(address(this));
+            uint usdtBalBefore = IERC20(usdtAddress).balanceOf(address(this));
+
             // Удаляем ликвидность с правильным порядком токенов
             router.removeLiquidity(
                 tokenA,
@@ -660,9 +695,9 @@ contract MultiZap is Ownable {
                 block.timestamp + 300
             );
 
-            // Получаем балансы после удаления ликвидности
-            uint tokenBal = IERC20(_token).balanceOf(address(this));
-            uint usdtBal = IERC20(usdtAddress).balanceOf(address(this));
+            // Вычисляем ТОЛЬКО полученные от удаления ликвидности (дельта)
+            uint tokenBal = IERC20(_token).balanceOf(address(this)) - tokenBalBefore;
+            uint usdtBal = IERC20(usdtAddress).balanceOf(address(this)) - usdtBalBefore;
 
             // Свопаем токены на USDT, если есть
             if (tokenBal > 0) {
@@ -678,7 +713,8 @@ contract MultiZap is Ownable {
                     address(this),
                     block.timestamp + 300
                 );
-                usdtBal = IERC20(usdtAddress).balanceOf(address(this));
+                // Обновляем баланс USDT после свопа (дельта от первоначального)
+                usdtBal = IERC20(usdtAddress).balanceOf(address(this)) - usdtBalBefore;
             }
 
             // Свопаем USDT на BNB
@@ -795,6 +831,26 @@ contract MultiZap is Ownable {
         return IERC20(_token).balanceOf(address(this));
     }
 
+
+    /**
+     * @dev Извлекает застрявшие токены из контракта (остатки от неполных операций)
+     * @param _token Адрес токена для извлечения
+     */
+    function rescueTokens(address _token) external onlyOwner {
+        uint balance = IERC20(_token).balanceOf(address(this));
+        require(balance > 0, "NO_TOKEN_BALANCE");
+        IERC20(_token).safeTransfer(owner(), balance);
+    }
+
+    /**
+     * @dev Извлекает застрявший ETH/BNB из контракта
+     */
+    function rescueETH() external onlyOwner {
+        uint balance = address(this).balance;
+        require(balance > 0, "NO_ETH_BALANCE");
+        (bool success, ) = payable(owner()).call{value: balance}("");
+        require(success, "ETH_TRANSFER_FAILED");
+    }
 
     receive() external payable {}
 }
