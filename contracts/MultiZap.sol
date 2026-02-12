@@ -277,42 +277,32 @@ contract MultiZap is Ownable {
         address wbnb = wethAddress;
 
         if (baseToken == wbnb) {
-            // WBNB пара - существующая логика
+            // WBNB/WETH пара
             uint half = msg.value / 2;
             uint otherHalf = msg.value - half;
-
-            address[] memory path = new address[](2);
-            path[0] = wbnb;
-            path[1] = _token;
-
-            // Запоминаем баланс ДО свопа (чтобы не учитывать остатки от прошлых операций)
-            uint tokenBalBefore = IERC20(_token).balanceOf(address(this));
-
-            // Сначала свопаем половину ETH/BNB на токены
-            router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: half}(
-                amountOutMinToken,
-                path,
-                address(this),
-                block.timestamp + 300
-            );
-
-            // Вычисляем ТОЛЬКО количество полученных от свопа токенов (дельта)
-            uint tokenBal = IERC20(_token).balanceOf(address(this)) - tokenBalBefore;
-            require(tokenBal > 0, "NO_TOKENS_RECEIVED");
 
             // Получаем адрес LP пары
             address lpPair = factory.getPair(_token, wbnb);
             require(lpPair != address(0), "LP_PAIR_NOT_FOUND");
 
-            // Обходим Router чтобы избежать re-entrancy с токенами, 
-            // которые вызывают swap внутри _transfer (anti-bot логика)
-            // 1. Оборачиваем ETH в WETH
+            address[] memory path = new address[](2);
+            path[0] = wbnb;
+            path[1] = _token;
+
+            // Свопаем половину ETH НАПРЯМУЮ В LP ПАРУ (минуя наш контракт)
+            // Это обходит anti-bot логику токенов, которая блокирует transferFrom из контрактов
+            router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: half}(
+                amountOutMinToken,
+                path,
+                lpPair,  // токены идут сразу в пару, не в наш контракт
+                block.timestamp + 300
+            );
+
+            // Оборачиваем вторую половину ETH в WETH и отправляем в пару
             IWETH(wbnb).deposit{value: otherHalf}();
-            // 2. Переводим токены напрямую в пару
-            IERC20(_token).safeTransfer(lpPair, tokenBal);
-            // 3. Переводим WETH напрямую в пару
             IWETH(wbnb).transfer(lpPair, otherHalf);
-            // 4. Минтим LP токены
+
+            // Минтим LP токены
             IUniswapV2Pair(lpPair).mint(address(this));
         } else {
             // USDT пара - новая логика
