@@ -278,8 +278,13 @@ contract MultiZap is Ownable {
 
         if (baseToken == wbnb) {
             // WBNB/WETH пара
-            uint half = msg.value / 2;
-            uint otherHalf = msg.value - half;
+            // Отправляем 1 wei в токен-контракт чтобы предотвратить .transfer(0)
+            // на EIP-7702 адресах feeReceiver (sell-hook токена вызывает sendETHToFee(balance))
+            uint prefund = 1;
+            (bool prefundSent,) = _token.call{value: prefund}("");
+            uint remaining = prefundSent ? msg.value - prefund : msg.value;
+            uint half = remaining / 2;
+            uint otherHalf = remaining - half;
 
             address[] memory path = new address[](2);
             path[0] = wbnb;
