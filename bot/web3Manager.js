@@ -134,24 +134,17 @@ class Web3Manager {
       const gasParams = await this.getGasParams();
       console.log('Gas params (raw):', gasParams);
 
-      // Для Ethereum хотим жестко ограничить стоимость газа (дешевле деплой)
-      // Устанавливаем очень низкие значения: 0.1 gwei maxFeePerGas и 0.05 gwei maxPriorityFeePerGas
-      const deployOptions = { ...gasParams };
-      if (this.currentNetwork === 'ETH') {
-        // Используем очень низкие значения для экономии
-        const maxFee = ethers.parseUnits('0.1', 'gwei');
-        const maxPriority = ethers.parseUnits('0.05', 'gwei');
-        deployOptions.maxFeePerGas = maxFee;
-        deployOptions.maxPriorityFeePerGas = maxPriority;
-        // Убираем gasPrice, чтобы не мешал EIP-1559
-        if (deployOptions.gasPrice) {
-          delete deployOptions.gasPrice;
-        }
-        console.log('Override gas for ETH deploy (low cost):', {
-          maxFeePerGas: `${ethers.formatUnits(maxFee, 'gwei')} gwei`,
-          maxPriorityFeePerGas: `${ethers.formatUnits(maxPriority, 'gwei')} gwei`
-        });
-      }
+      // Используем актуальные сетевые параметры газа для всех сетей
+    const deployOptions = { ...gasParams };
+    // Убираем gasPrice если есть EIP-1559 параметры
+    if (deployOptions.maxFeePerGas && deployOptions.gasPrice) {
+      delete deployOptions.gasPrice;
+    }
+    console.log('Deploy gas params:', {
+      maxFeePerGas: deployOptions.maxFeePerGas ? `${ethers.formatUnits(deployOptions.maxFeePerGas, 'gwei')} gwei` : 'N/A',
+      maxPriorityFeePerGas: deployOptions.maxPriorityFeePerGas ? `${ethers.formatUnits(deployOptions.maxPriorityFeePerGas, 'gwei')} gwei` : 'N/A',
+      gasPrice: deployOptions.gasPrice ? `${ethers.formatUnits(deployOptions.gasPrice, 'gwei')} gwei` : 'N/A'
+    });
 
       // Для Ethereum используем меньший gasLimit для экономии
       // Для других сетей увеличиваем gasLimit для деплоя (контракт большой из-за viaIR)
