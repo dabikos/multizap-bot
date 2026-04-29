@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const config = require('./config');
 
 class UserManager {
   constructor() {
@@ -53,7 +54,7 @@ class UserManager {
         privateKey: privateKey,
         contractAddress: null, // Legacy, для обратной совместимости
         contracts: {}, // { ETH: '0x...', BSC: '0x...', BASE: '0x...' }
-        currentNetwork: 'BSC', // Текущая выбранная сеть
+        currentNetwork: config.DEFAULT_NETWORK, // Текущая выбранная сеть
         createdAt: new Date().toISOString(),
         lastActivity: new Date().toISOString()
       };
@@ -71,7 +72,7 @@ class UserManager {
 
   updateUserContract(telegramId, contractAddress, networkName = null) {
     if (this.users[telegramId]) {
-      const network = networkName ? networkName.toUpperCase() : this.users[telegramId].currentNetwork || 'BSC';
+      const network = networkName ? networkName.toUpperCase() : this.users[telegramId].currentNetwork || config.DEFAULT_NETWORK;
       
       // Обновляем legacy поле для обратной совместимости
       this.users[telegramId].contractAddress = contractAddress;
@@ -102,14 +103,14 @@ class UserManager {
 
   getUserNetwork(telegramId) {
     if (this.users[telegramId]) {
-      return this.users[telegramId].currentNetwork || 'BSC';
+      return this.users[telegramId].currentNetwork || config.DEFAULT_NETWORK;
     }
-    return 'BSC';
+    return config.DEFAULT_NETWORK;
   }
 
   getUserContract(telegramId, networkName = null) {
     if (this.users[telegramId]) {
-      const network = networkName ? networkName.toUpperCase() : this.users[telegramId].currentNetwork || 'BSC';
+      const network = networkName ? networkName.toUpperCase() : this.users[telegramId].currentNetwork || config.DEFAULT_NETWORK;
       
       // Сначала проверяем новую структуру contracts
       if (this.users[telegramId].contracts && this.users[telegramId].contracts[network]) {
@@ -166,7 +167,6 @@ class UserManager {
 }
 
 module.exports = UserManager;
-
 
 
 

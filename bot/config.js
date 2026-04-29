@@ -77,7 +77,7 @@ module.exports = {
   NETWORKS: NETWORKS,
   
   // Default Network (для обратной совместимости)
-  DEFAULT_NETWORK: process.env.DEFAULT_NETWORK || 'BSC',
+  DEFAULT_NETWORK: process.env.DEFAULT_NETWORK || 'ETH',
   
   // Legacy BSC Configuration (для обратной совместимости)
   RPC_URL: process.env.RPC_URL || NETWORKS.BSC.rpcUrl,

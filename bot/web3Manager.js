@@ -1,4 +1,4 @@
-const { ethers } = require('ethers');
+﻿const { ethers } = require('ethers');
 const fs = require('fs');
 const path = require('path');
 const config = require('./config');
@@ -118,17 +118,12 @@ class Web3Manager {
       throw new Error('FACTORY_ADDRESS не определен в конфигурации сети');
     }
 
-    if (!this.networkConfig.usdtAddress) {
-      throw new Error('USDT_ADDRESS не определен в конфигурации сети');
-    }
-
     try {
       console.log(`Развертывание контракта в сети ${this.currentNetwork}:`);
       console.log('ABI:', this.abi ? 'загружен' : 'не загружен');
       console.log('Bytecode:', this.bytecode ? 'загружен' : 'не загружен');
       console.log('Router Address:', this.networkConfig.routerAddress);
       console.log('Factory Address:', this.networkConfig.factoryAddress);
-      console.log('USDT Address:', this.networkConfig.usdtAddress);
       console.log('Wallet Address:', this.wallet.address);
 
       const gasParams = await this.getGasParams();
@@ -154,7 +149,6 @@ class Web3Manager {
         const deployTx = await MultiZapFactory.getDeployTransaction(
           ethers.getAddress(this.networkConfig.routerAddress),
           ethers.getAddress(this.networkConfig.factoryAddress),
-          ethers.getAddress(this.networkConfig.usdtAddress),
           wethForEstimate
         );
         const estimated = await this.provider.estimateGas({
@@ -175,7 +169,6 @@ class Web3Manager {
       // Проверяем адреса перед деплоем
       const routerAddr = ethers.getAddress(this.networkConfig.routerAddress);
       const factoryAddr = ethers.getAddress(this.networkConfig.factoryAddress);
-      const usdtAddr = ethers.getAddress(this.networkConfig.usdtAddress);
 
       // Определяем WETH адрес (роутеры могут использовать WETH() или WETH9())
       const wethAddr = await this.getWethAddress();
@@ -183,14 +176,12 @@ class Web3Manager {
       console.log('Проверка адресов:');
       console.log('  Router:', routerAddr);
       console.log('  Factory:', factoryAddr);
-      console.log('  USDT:', usdtAddr);
       console.log('  WETH:', wethAddr);
 
       const MultiZapFactory = new ethers.ContractFactory(this.abi, this.bytecode, this.wallet);
       const multiZap = await MultiZapFactory.deploy(
         routerAddr,
         factoryAddr,
-        usdtAddr,
         wethAddr,
         deployOptions  // Опции передаются как 5-й аргумент
       );
@@ -222,41 +213,46 @@ class Web3Manager {
     }
   }
 
-  async addToken(tokenAddress, lpTokenAddress, baseTokenAddress) {
-    if (!this.multiZapContract) {
-      throw new Error('Контракт не подключен');
+  normalizeGasLimit(gasLimit, fallbackGasLimit = 500000n) {
+    if (gasLimit == null) {
+      return fallbackGasLimit;
     }
 
-    if (!ethers.isAddress(tokenAddress)) {
-      throw new Error('Неверный адрес токена');
-    }
-    if (!ethers.isAddress(lpTokenAddress)) {
-      throw new Error('Неверный адрес LP токена');
-    }
-    if (!ethers.isAddress(baseTokenAddress)) {
-      throw new Error('Неверный адрес базового токена');
+    if (typeof gasLimit === 'bigint') {
+      return gasLimit;
     }
 
-    try {
-      const gasParams = await this.getGasParams();
-      const tx = await this.multiZapContract.addToken(tokenAddress, lpTokenAddress, baseTokenAddress, gasParams);
-      await tx.wait();
-      return tx.hash;
-    } catch (error) {
-      throw new Error(`Ошибка добавления токена: ${error.message}`);
-    }
+    return BigInt(gasLimit);
   }
 
-  async addTokenAuto(tokenAddress, useUSDT = false) {
+  async buildTxOverrides(estimateFn, fallbackGasLimit = 500000n) {
+    const gasParams = await this.getGasParams();
+    // Убираем gasLimit из gasParams чтобы он не перезаписывал наш рассчитанный лимит
+    const { gasLimit: _configGasLimit, ...gasParamsWithoutLimit } = gasParams;
+    const overrides = { ...gasParamsWithoutLimit };
+
+    try {
+      const estimatedGas = await estimateFn(overrides);
+      // Добавляем 20% буфер к реальной оценке газа
+      overrides.gasLimit = estimatedGas + (estimatedGas / 5n);
+      console.log(`EstimateGas: ${estimatedGas.toString()}, с буфером: ${overrides.gasLimit.toString()}`);
+    } catch (error) {
+      console.warn('Gas estimate failed, using fallback gas limit:', error.message);
+      overrides.gasLimit = fallbackGasLimit;
+    }
+
+    return overrides;
+  }
+
+  async addTokenAuto(tokenAddress) {
     if (!this.multiZapContract) {
-      throw new Error('Контракт не подключен');
+      throw new Error('Contract is not connected');
     }
 
     if (!ethers.isAddress(tokenAddress)) {
-      throw new Error('Неверный адрес токена');
+      throw new Error('Invalid token address');
     }
 
-    // Предварительная проверка существования LP пары
     try {
       const factoryContract = new ethers.Contract(
         this.networkConfig.factoryAddress,
@@ -265,42 +261,30 @@ class Web3Manager {
       );
 
       const wethAddress = await this.getWethAddress();
-      const baseTokenAddress = useUSDT ? (this.networkConfig.usdtAddress || ethers.ZeroAddress) : wethAddress;
-
-      if (useUSDT && baseTokenAddress === ethers.ZeroAddress) {
-        throw new Error('USDT_ADDRESS_NOT_SET: Адрес USDT не настроен в конфигурации сети');
-      }
-
-      const lpPair = await factoryContract.getPair(tokenAddress, baseTokenAddress);
-      const baseTokenName = useUSDT ? 'USDT' : 'WETH/WBNB';
+      const lpPair = await factoryContract.getPair(tokenAddress, wethAddress);
 
       if (lpPair === ethers.ZeroAddress) {
-        throw new Error(`LP_PAIR_NOT_FOUND: Для токена ${tokenAddress} не найдена LP пара с ${baseTokenName} (${baseTokenAddress}). Возможно, токен новый и пара еще не создана, или используется другой DEX. Попробуйте добавить токен вручную с указанием LP адреса.`);
+        throw new Error(`LP_PAIR_NOT_FOUND: No WETH/WBNB LP pair found for token ${tokenAddress} (${wethAddress}).`);
       }
     } catch (error) {
-      // Если ошибка уже содержит LP_PAIR_NOT_FOUND или USDT_ADDRESS_NOT_SET, пробрасываем её дальше
-      if (error.message.includes('LP_PAIR_NOT_FOUND') || error.message.includes('USDT_ADDRESS_NOT_SET')) {
+      if (error.message.includes('LP_PAIR_NOT_FOUND')) {
         throw error;
       }
-      // Иначе продолжаем - возможно проблема с подключением, но попробуем добавить
-      console.warn('Предупреждение: не удалось проверить LP пару заранее:', error.message);
+      console.warn('Warning: failed to pre-check LP pair:', error.message);
     }
 
     try {
-      const gasParams = await this.getGasParams();
-      const tx = await this.multiZapContract.addTokenAuto(tokenAddress, useUSDT, gasParams);
-
-      // Для Ethereum и Base используем более быструю проверку (1 подтверждение)
-      // Для BSC можно использовать больше подтверждений
-      const confirmations = this.networkConfig.supportsEIP1559 ? 1 : 1;
-      await tx.wait(confirmations);
-
+      const txOverrides = await this.buildTxOverrides(
+        (overrides) => this.multiZapContract.addTokenAuto.estimateGas(tokenAddress, overrides),
+        180000n
+      );
+      const tx = await this.multiZapContract.addTokenAuto(tokenAddress, txOverrides);
+      await tx.wait(1);
       return tx.hash;
     } catch (error) {
-      throw new Error(`Ошибка автоматического добавления токена: ${error.message}`);
+      throw new Error(`Auto-add token error: ${error.message}`);
     }
   }
-
   async removeToken(tokenAddress) {
     if (!this.multiZapContract) {
       throw new Error('Контракт не подключен');
@@ -316,24 +300,6 @@ class Web3Manager {
       return tx.hash;
     } catch (error) {
       throw new Error(`Ошибка удаления токена: ${error.message}`);
-    }
-  }
-
-  async setTokenStatus(tokenAddress, isActive) {
-    if (!this.multiZapContract) {
-      throw new Error('Контракт не подключен');
-    }
-
-    if (!ethers.isAddress(tokenAddress)) {
-      throw new Error('Неверный адрес токена');
-    }
-
-    try {
-      const tx = await this.multiZapContract.setTokenStatus(tokenAddress, isActive);
-      await tx.wait();
-      return tx.hash;
-    } catch (error) {
-      throw new Error(`Ошибка изменения статуса токена: ${error.message}`);
     }
   }
 
@@ -390,37 +356,38 @@ class Web3Manager {
 
     try {
       const amountWei = ethers.parseEther(amountEth.toString());
-      const gasParams = await this.getGasParams();
-
-      // 20% slippage - используем 80% от сумм
-      const halfAmount = amountWei / 2n;
       const amountOutMinToken = 0n;
       const amountTokenMin = 0n;
-      const amountBNBMin = 0n;
+      const amountETHMin = 0n;
 
-      console.log(`Slippage: 0% (минимумы установлены в 0 для максимальной гибкости)`);
-      console.log(`Amount Out Min Token: ${ethers.formatEther(amountOutMinToken)} ${this.networkConfig.nativeCurrency}`);
-      console.log(`Amount Token Min: ${ethers.formatEther(amountTokenMin)} ${this.networkConfig.nativeCurrency}`);
-      console.log(`Amount ${this.networkConfig.nativeCurrency} Min: ${ethers.formatEther(amountBNBMin)} ${this.networkConfig.nativeCurrency}`);
       console.log(`Сумма покупки: ${amountEth} ${this.networkConfig.nativeCurrency} (${amountWei.toString()} wei)`);
       console.log(`Адрес контракта: ${await this.multiZapContract.getAddress()}`);
       console.log(`Адрес кошелька: ${this.wallet.address}`);
       console.log(`Адрес токена: ${tokenAddress}`);
 
+      // Используем buildTxOverrides с реальным estimateGas (как в deploy)
+      const txOverrides = await this.buildTxOverrides(
+        (overrides) => this.multiZapContract.zapIn.estimateGas(
+          tokenAddress,
+          amountOutMinToken,
+          amountTokenMin,
+          amountETHMin,
+          { value: amountWei, ...overrides }
+        ),
+        450000n
+      );
+
       // Проверяем баланс перед отправкой транзакции
       const balance = await this.provider.getBalance(this.wallet.address);
-      const estimatedGas = gasParams.gasLimit
-        ? (typeof gasParams.gasLimit === 'string' ? BigInt(gasParams.gasLimit) : BigInt(gasParams.gasLimit))
-        : BigInt(500000);
+      const gasLimit = this.normalizeGasLimit(txOverrides.gasLimit, 450000n);
 
       let estimatedGasCost;
-      if (this.networkConfig.supportsEIP1559 && gasParams.maxFeePerGas) {
-        estimatedGasCost = estimatedGas * gasParams.maxFeePerGas;
-      } else if (gasParams.gasPrice) {
-        estimatedGasCost = estimatedGas * gasParams.gasPrice;
+      if (this.networkConfig.supportsEIP1559 && txOverrides.maxFeePerGas) {
+        estimatedGasCost = gasLimit * txOverrides.maxFeePerGas;
+      } else if (txOverrides.gasPrice) {
+        estimatedGasCost = gasLimit * txOverrides.gasPrice;
       } else {
-        // Fallback оценка
-        estimatedGasCost = estimatedGas * ethers.parseUnits('50', 'gwei');
+        estimatedGasCost = gasLimit * ethers.parseUnits('50', 'gwei');
       }
 
       const totalNeeded = amountWei + estimatedGasCost;
@@ -431,20 +398,20 @@ class Web3Manager {
         throw new Error(`Недостаточно средств для транзакции. Баланс: ${balanceEth} ${this.networkConfig.nativeCurrency}, требуется: ${neededEth} ${this.networkConfig.nativeCurrency} (включая газ)`);
       }
 
-      console.log(`Gas params:`, gasParams);
+      console.log(`Gas limit: ${gasLimit.toString()}`);
       console.log(`Estimated gas cost: ${ethers.formatEther(estimatedGasCost)} ${this.networkConfig.nativeCurrency}`);
       console.log(`Total needed: ${ethers.formatEther(totalNeeded)} ${this.networkConfig.nativeCurrency}`);
 
-      // Отправляем транзакцию (ethers.js автоматически оценит газ)
+      // Отправляем транзакцию
       console.log('Отправка транзакции...');
       const tx = await this.multiZapContract.zapIn(
         tokenAddress,
         amountOutMinToken,
         amountTokenMin,
-        amountBNBMin,
+        amountETHMin,
         {
           value: amountWei,
-          ...gasParams
+          ...txOverrides
         }
       );
       console.log(`Транзакция отправлена: ${tx.hash}`);
@@ -548,7 +515,7 @@ class Web3Manager {
     }
   }
 
-  async exitAndSell(tokenAddress, slippagePercent = config.DEFAULT_SLIPPAGE) {
+  async zapInAuto(tokenAddress, amountEth, slippagePercent = config.DEFAULT_SLIPPAGE) {
     if (!this.multiZapContract) {
       throw new Error('Контракт не подключен');
     }
@@ -557,492 +524,117 @@ class Web3Manager {
       throw new Error('Неверный адрес токена');
     }
 
-    // Получаем информацию о токене из контракта
+    if (amountEth <= 0) {
+      throw new Error('Сумма должна быть больше 0');
+    }
+
+    try {
+      const amountWei = ethers.parseEther(amountEth.toString());
+      const amountOutMinToken = 0n;
+      const amountTokenMin = 0n;
+      const amountETHMin = 0n;
+
+      const txOverrides = await this.buildTxOverrides(
+        (overrides) => this.multiZapContract.addTokenAndZapIn.estimateGas(
+          tokenAddress,
+          amountOutMinToken,
+          amountTokenMin,
+          amountETHMin,
+          { value: amountWei, ...overrides }
+        ),
+        450000n
+      );
+
+      const tx = await this.multiZapContract.addTokenAndZapIn(
+        tokenAddress,
+        amountOutMinToken,
+        amountTokenMin,
+        amountETHMin,
+        {
+          value: amountWei,
+          ...txOverrides
+        }
+      );
+
+      const receipt = await tx.wait();
+      if (receipt.status === 0) {
+        throw new Error('Транзакция отклонена контрактом.');
+      }
+
+      return tx.hash;
+    } catch (error) {
+      let errorMessage = error.message || 'Неизвестная ошибка';
+
+      if (errorMessage.includes('LP_PAIR_NOT_FOUND')) {
+        errorMessage = 'LP пара WETH не найдена для этого токена.';
+      } else if (errorMessage.includes('TOKEN_INACTIVE')) {
+        errorMessage = 'Токен неактивен в контракте.';
+      } else if (errorMessage.includes('NO_TOKENS_RECEIVED')) {
+        errorMessage = 'Не удалось получить токены после swap.';
+      } else if (errorMessage.includes('insufficient funds') || errorMessage.includes('insufficient balance')) {
+        errorMessage = 'Недостаточно средств для оплаты газа и покупки.';
+      }
+
+      throw new Error(`Ошибка buy: ${errorMessage}`);
+    }
+  }
+
+  async exitAndSell(tokenAddress, slippagePercent = config.DEFAULT_SLIPPAGE) {
+    if (!this.multiZapContract) {
+      throw new Error('Contract is not connected');
+    }
+
+    if (!ethers.isAddress(tokenAddress)) {
+      throw new Error('Invalid token address');
+    }
+
     let tokenInfo;
     try {
       tokenInfo = await this.retryCall(() => this.multiZapContract.getTokenInfo(tokenAddress));
     } catch (error) {
-      throw new Error(`Ошибка получения информации о токене: ${error.message}`);
+      throw new Error(`Token info error: ${error.message}`);
     }
 
     if (!tokenInfo || tokenInfo.token === ethers.ZeroAddress) {
-      throw new Error('Токен не найден в контракте. Сначала добавьте токен через /addtoken');
+      throw new Error('Token not found in contract. Add it first with /addtoken');
     }
 
-    const storedLpToken = tokenInfo.lpToken;
-    const baseToken = tokenInfo.baseToken;
-    console.log(`Сохраненный LP токен в контракте: ${storedLpToken}`);
-    console.log(`Base token (тип пары): ${baseToken}`);
-
-    // Проверяем, что baseToken установлен (для старых токенов может быть address(0))
-    if (!baseToken || baseToken === ethers.ZeroAddress) {
-      throw new Error('BASE_TOKEN_NOT_SET: Токен был добавлен до обновления контракта. Пожалуйста, удалите токен и добавьте его заново через /addtoken с указанием типа пары (WBNB или USDT).');
+    if (!tokenInfo.isActive) {
+      throw new Error('TOKEN_INACTIVE: Token is inactive in the contract.');
     }
 
-    // Проверяем, что LP токен существует и правильный
+    console.log(`Stored LP token in contract: ${tokenInfo.lpToken}`);
     try {
-      // Получаем Factory адрес из контракта
-      const contractFactoryAddress = await this.retryCall(() => this.multiZapContract.factory());
-      const configFactoryAddress = this.networkConfig.factoryAddress;
+      const amountTokenMin = 0n;
+      const amountETHMin = 0n;
+      const amountOutMinETH = 0n;
 
-      console.log(`Factory адрес в контракте: ${contractFactoryAddress}`);
-      console.log(`Factory адрес в конфиге: ${configFactoryAddress}`);
-
-      // Если Factory адреса не совпадают, это может быть проблемой
-      if (contractFactoryAddress.toLowerCase() !== configFactoryAddress.toLowerCase()) {
-        console.warn(`⚠️ ВНИМАНИЕ: Factory в контракте (${contractFactoryAddress}) отличается от Factory в конфиге (${configFactoryAddress})`);
-        console.warn(`Это может означать, что контракт был развернут с другим Factory.`);
-        console.warn(`Токены, добавленные через addTokenAuto(), используют Factory из контракта.`);
-      }
-
-      // Получаем WETH адрес
-      const routerContract = new ethers.Contract(
-        this.networkConfig.routerAddress,
-        ['function WETH() external pure returns (address)'],
-        this.provider
+      const txOverrides = await this.buildTxOverrides(
+        (overrides) => this.multiZapContract.exitAndSell.estimateGas(tokenAddress, amountTokenMin, amountETHMin, amountOutMinETH, overrides),
+        420000n
       );
-      const wethAddress = await routerContract.WETH();
-
-      // Проверяем LP пару через Factory из контракта (который используется при addTokenAuto)
-      const contractFactory = new ethers.Contract(
-        contractFactoryAddress,
-        ['function getPair(address, address) view returns (address)'],
-        this.provider
-      );
-      const lpTokenFromContractFactory = await contractFactory.getPair(tokenAddress, wethAddress);
-
-      // Также проверяем через Factory из конфига
-      const configFactory = new ethers.Contract(
-        configFactoryAddress,
-        ['function getPair(address, address) view returns (address)'],
-        this.provider
-      );
-      const lpTokenFromConfigFactory = await configFactory.getPair(tokenAddress, wethAddress);
-
-      console.log(`LP токен из Factory контракта: ${lpTokenFromContractFactory}`);
-      console.log(`LP токен из Factory конфига: ${lpTokenFromConfigFactory}`);
-      console.log(`Сохраненный LP токен в контракте: ${storedLpToken}`);
-
-      // Проверяем соответствие
-      const storedLpLower = storedLpToken.toLowerCase();
-      const contractFactoryLpLower = lpTokenFromContractFactory.toLowerCase();
-      const configFactoryLpLower = lpTokenFromConfigFactory.toLowerCase();
-
-      // Если LP токен из Factory контракта не совпадает с сохраненным
-      if (lpTokenFromContractFactory !== ethers.ZeroAddress && contractFactoryLpLower !== storedLpLower) {
-        console.warn(`⚠️ ВНИМАНИЕ: Сохраненный LP токен (${storedLpToken}) не совпадает с LP токеном из Factory контракта (${lpTokenFromContractFactory})`);
-        console.warn(`Возможно, токен был добавлен вручную с неправильным LP адресом.`);
-      }
-
-      // Если Factory адреса разные и LP токены тоже разные
-      if (contractFactoryAddress.toLowerCase() !== configFactoryAddress.toLowerCase() &&
-        lpTokenFromContractFactory !== ethers.ZeroAddress &&
-        lpTokenFromConfigFactory !== ethers.ZeroAddress &&
-        contractFactoryLpLower !== configFactoryLpLower) {
-        console.warn(`⚠️ КРИТИЧЕСКОЕ ВНИМАНИЕ: Разные Factory дают разные LP токены!`);
-        console.warn(`Это может быть причиной ошибки продажи.`);
-        console.warn(`Рекомендуется использовать токены, добавленные через addTokenAuto() с правильным Factory.`);
-      }
-    } catch (error) {
-      console.warn('Не удалось проверить LP токен через Factory:', error.message);
-      // Продолжаем - возможно это rate limit
-    }
-
-    // Проверяем баланс LP перед продажей
-    let factoryMismatchWarning = null;
-    try {
-      const contractFactoryAddress = await this.retryCall(() => this.multiZapContract.factory()).catch(() => null);
-      const configFactoryAddress = this.networkConfig.factoryAddress;
-
-      if (contractFactoryAddress && contractFactoryAddress.toLowerCase() !== configFactoryAddress.toLowerCase()) {
-        factoryMismatchWarning = `⚠️ Factory в контракте отличается от Factory в конфиге. Это может быть причиной ошибки продажи.`;
-      }
-    } catch (e) {
-      // Игнорируем ошибку получения Factory
-    }
-
-    try {
-      const lpBalance = await this.retryCall(() => this.multiZapContract.getLpBalance(tokenAddress));
-      const lpBalanceFormatted = ethers.formatEther(lpBalance);
-      const lpBalanceNum = parseFloat(lpBalanceFormatted);
-
-      if (lpBalanceNum === 0 || lpBalance === 0n) {
-        let errorMsg = 'NO_LP_BALANCE: У вас нет LP токенов для продажи. Баланс LP: 0';
-        if (factoryMismatchWarning) {
-          errorMsg += `\n\n${factoryMismatchWarning}`;
-        }
-        throw new Error(errorMsg);
-      }
-
-      console.log(`LP баланс перед продажей: ${lpBalanceFormatted}`);
-      console.log(`LP токен адрес: ${storedLpToken}`);
-    } catch (error) {
-      // Если ошибка уже содержит NO_LP_BALANCE, пробрасываем её
-      if (error.message.includes('NO_LP_BALANCE')) {
-        throw error;
-      }
-      // Иначе проверяем, может быть это rate limit - продолжаем
-      if (error.message.includes('rate limit') || error.message.includes('missing revert data')) {
-        console.warn('Не удалось проверить LP баланс заранее, продолжаем попытку продажи:', error.message);
-      } else {
-        throw new Error(`Ошибка проверки LP баланса: ${error.message}`);
-      }
-    }
-
-    try {
-      const gasParams = await this.getGasParams();
-
-      console.log(`Slippage: 0% (для exitAndSell - максимальная гибкость)`);
 
       const tx = await this.multiZapContract.exitAndSell(
         tokenAddress,
-        0, // amountTokenMin - 0 для максимальной гибкости
-        0, // amountBNBMin - 0 для максимальной гибкости
-        0, // amountOutMinBNB - 0 для максимальной гибкости
-        gasParams
+        amountTokenMin,
+        amountETHMin,
+        amountOutMinETH,
+        txOverrides
       );
-
-      // Ждем подтверждения транзакции
-      const receipt = await tx.wait();
-
-      // Проверяем статус транзакции
-      if (receipt.status === 0) {
-        // Транзакция была отклонена
-        // Пытаемся понять причину
-        let errorDetails = [];
-
-        try {
-          const lpBalance = await this.retryCall(() => this.multiZapContract.getLpBalance(tokenAddress)).catch(() => 0n);
-          if (lpBalance === 0n) {
-            errorDetails.push('Нет LP токенов для продажи (баланс LP: 0)');
-          }
-        } catch (e) {
-          // Игнорируем ошибку проверки баланса
-        }
-
-        try {
-          const tokenInfo = await this.retryCall(() => this.multiZapContract.getTokenInfo(tokenAddress)).catch(() => null);
-          if (tokenInfo && (!tokenInfo.baseToken || tokenInfo.baseToken === ethers.ZeroAddress)) {
-            errorDetails.push('Токен был добавлен до обновления контракта (baseToken не установлен). Удалите токен и добавьте заново через /addtoken');
-          }
-          if (tokenInfo && !tokenInfo.isActive) {
-            errorDetails.push('Токен неактивен');
-          }
-        } catch (e) {
-          // Игнорируем ошибку получения информации
-        }
-
-        let errorMsg = 'Транзакция была отклонена контрактом.';
-        if (errorDetails.length > 0) {
-          errorMsg += '\n\nВозможные причины:\n• ' + errorDetails.join('\n• ');
-        } else {
-          errorMsg += '\n\nВозможные причины:\n• Нет LP токенов для продажи\n• Недостаточно ликвидности в пуле\n• Токен неактивен\n• Токен был добавлен до обновления контракта (baseToken не установлен)';
-        }
-
-        throw new Error(errorMsg);
-      }
-
+      await tx.wait();
       return tx.hash;
     } catch (error) {
-      // Улучшаем сообщение об ошибке
-      if (error.message.includes('NO_LP') || error.message.includes('NO_LP_BALANCE')) {
-        let errorMsg = 'У вас нет LP токенов для продажи. Сначала купите токены через zap-in.';
-        if (error.message.includes('Factory')) {
-          errorMsg += '\n\n⚠️ Также обнаружена проблема с Factory адресом. Убедитесь, что контракт был развернут с правильным Factory.';
-        }
-        throw new Error(errorMsg);
+      let errorMsg = error.message || 'Unknown error';
+      if (errorMsg.includes('TOKEN_INACTIVE')) {
+        errorMsg = 'Token is inactive in the contract.';
+      } else if (errorMsg.includes('NO_LP')) {
+        errorMsg = 'No LP tokens available to sell.';
+      } else if (errorMsg.includes('LP_PAIR_NOT_FOUND')) {
+        errorMsg = 'No WETH/WBNB LP pair found for this token.';
       }
-      if (error.message.includes('TOKEN_NOT_SUPPORTED')) {
-        throw new Error('Токен не поддерживается или не добавлен в контракт.');
-      }
-      if (error.message.includes('TOKEN_INACTIVE')) {
-        throw new Error('Токен неактивен. Обратитесь к администратору.');
-      }
-      if (error.receipt && error.receipt.status === 0) {
-        let errorMsg = 'Транзакция была отклонена. Возможные причины:\n';
-        errorMsg += '• Нет LP токенов для продажи\n';
-        errorMsg += '• Недостаточно ликвидности в пуле\n';
-        errorMsg += '• Проблема с контрактом или Factory\n';
-        errorMsg += '• Неправильный LP токен адрес (если токен был добавлен вручную)';
-        throw new Error(errorMsg);
-      }
-      throw new Error(`Ошибка exit-and-sell: ${error.message}`);
+      throw new Error(`Exit-and-sell error: ${errorMsg}`);
     }
   }
-
-  async exitAndSellPartial(tokenAddress, percent, slippagePercent = config.DEFAULT_SLIPPAGE) {
-    if (!this.multiZapContract) {
-      throw new Error('Контракт не подключен');
-    }
-
-    if (!ethers.isAddress(tokenAddress)) {
-      throw new Error('Неверный адрес токена');
-    }
-
-    // ВАЖНО: Проверяем, что percent не является дробным числом (например, 0.05 вместо 5)
-    // Если percent меньше 1, это может быть ошибка (например, 0.05 вместо 5)
-    if (typeof percent === 'number' && percent < 1 && percent > 0) {
-      throw new Error(`Похоже, что передан дробный процент (${percent}) вместо целого числа. Используйте целые числа: 5, 25, 50, 75`);
-    }
-
-    // Убеждаемся, что percent - это целое число
-    let percentInt;
-    if (typeof percent === 'string') {
-      percentInt = parseInt(percent, 10);
-      if (isNaN(percentInt)) {
-        throw new Error(`Неверный формат процента (строка): "${percent}"`);
-      }
-    } else if (typeof percent === 'number') {
-      // Проверяем, что это целое число, а не дробное
-      if (!Number.isInteger(percent)) {
-        throw new Error(`Процент должен быть целым числом, получено: ${percent}`);
-      }
-      percentInt = Math.floor(percent);
-    } else {
-      // Если это BigInt или другой тип, конвертируем в число
-      percentInt = Number(percent);
-      if (isNaN(percentInt)) {
-        throw new Error(`Неверный формат процента: ${percent} (тип: ${typeof percent})`);
-      }
-      if (!Number.isInteger(percentInt)) {
-        throw new Error(`Процент должен быть целым числом, получено: ${percentInt}`);
-      }
-      percentInt = Math.floor(percentInt);
-    }
-
-    // Проверяем, что percentInt - это целое число от 1 до 100
-    if (isNaN(percentInt) || !Number.isInteger(percentInt) || percentInt < 1 || percentInt > 100) {
-      throw new Error(`Неверный процент: ${percentInt} (исходный: ${percent}, тип: ${typeof percent}). Доступные значения: 5, 25, 50, 75`);
-    }
-
-    if (![5, 25, 50, 75].includes(percentInt)) {
-      throw new Error(`Неверный процент: ${percentInt} (исходный: ${percent}). Доступные значения: 5, 25, 50, 75`);
-    }
-
-    console.log(`exitAndSellPartial: percent=${percent} (тип: ${typeof percent}), percentInt=${percentInt} (тип: ${typeof percentInt}, isInteger: ${Number.isInteger(percentInt)})`);
-
-    // Получаем информацию о токене из контракта
-    let tokenInfo;
-    try {
-      tokenInfo = await this.retryCall(() => this.multiZapContract.getTokenInfo(tokenAddress));
-    } catch (error) {
-      throw new Error(`Ошибка получения информации о токене: ${error.message}`);
-    }
-
-    if (!tokenInfo || tokenInfo.token === ethers.ZeroAddress) {
-      throw new Error('Токен не найден в контракте. Сначала добавьте токен через /addtoken');
-    }
-
-    const baseToken = tokenInfo.baseToken;
-
-    // Проверяем, что baseToken установлен
-    if (!baseToken || baseToken === ethers.ZeroAddress) {
-      throw new Error('BASE_TOKEN_NOT_SET: Токен был добавлен до обновления контракта. Пожалуйста, удалите токен и добавьте его заново через /addtoken с указанием типа пары (WBNB или USDT).');
-    }
-
-    // Получаем баланс LP токенов
-    let lpBalance;
-    try {
-      lpBalance = await this.retryCall(() => this.multiZapContract.getLpBalance(tokenAddress));
-    } catch (error) {
-      throw new Error(`Ошибка получения баланса LP токенов: ${error.message}`);
-    }
-
-    if (lpBalance === 0n) {
-      throw new Error('Нет LP токенов для продажи');
-    }
-
-    // Вычисляем количество LP токенов для продажи
-    // Убеждаемся, что percentInt - это целое число перед конвертацией в BigInt
-    const percentForCalculation = Number.isInteger(percentInt) ? percentInt : Math.floor(Number(percentInt));
-
-    if (!Number.isInteger(percentForCalculation) || percentForCalculation < 1 || percentForCalculation > 100) {
-      throw new Error(`Неверный процент для вычислений: ${percentForCalculation} (исходный: ${percent}, тип: ${typeof percent})`);
-    }
-
-    console.log(`Вычисление lpToSell: lpBalance=${lpBalance}, percentForCalculation=${percentForCalculation} (тип: ${typeof percentForCalculation})`);
-
-    // Используем percentForCalculation для вычислений
-    const lpToSell = (lpBalance * BigInt(percentForCalculation)) / 100n;
-    if (lpToSell === 0n) {
-      throw new Error('Недостаточно LP токенов для продажи выбранного процента');
-    }
-
-    // Подготавливаем параметры газа
-    // Используем getGasParams() для правильной обработки EIP-1559 (Ethereum, Base)
-    // Это важно, так как для Ethereum и Base gasPrice может быть null
-    const gasParams = await this.getGasParams();
-
-    // Увеличиваем gasLimit для частичной продажи
-    const baseGasLimit = gasParams.gasLimit
-      ? (typeof gasParams.gasLimit === 'string' ? BigInt(gasParams.gasLimit) : BigInt(gasParams.gasLimit))
-      : BigInt(500000);
-
-    // Обновляем gasLimit в gasParams
-    if (this.networkConfig.supportsEIP1559) {
-      gasParams.gasLimit = baseGasLimit;
-    } else {
-      gasParams.gasLimit = baseGasLimit;
-    }
-
-    try {
-      // Убеждаемся, что percentInt - это целое число (не дробное)
-      // Конвертируем в число и проверяем, что это целое число
-      const percentNumber = Number(percentInt);
-      if (!Number.isInteger(percentNumber) || percentNumber < 1 || percentNumber > 100) {
-        throw new Error(`Неверный процент для контракта: ${percentNumber} (тип: ${typeof percentNumber})`);
-      }
-
-      // Убеждаемся, что это именно целое число, а не дробное
-      const percentForContract = Math.floor(percentNumber);
-
-      if (percentForContract !== percentNumber) {
-        throw new Error(`Процент должен быть целым числом, получено: ${percentNumber}`);
-      }
-
-      // Проверяем, что это одно из допустимых значений
-      if (![5, 25, 50, 75].includes(percentForContract)) {
-        throw new Error(`Неверный процент: ${percentForContract}. Доступные значения: 5, 25, 50, 75`);
-      }
-
-      console.log(`Вызов exitAndSellPartial с параметрами: tokenAddress=${tokenAddress}, percent=${percentForContract} (тип: ${typeof percentForContract}, isInteger: ${Number.isInteger(percentForContract)})`);
-
-      const tx = await this.multiZapContract.exitAndSellPartial(
-        tokenAddress,
-        percentForContract, // Явно передаем целое число
-        0, // amountTokenMin - 0 для максимальной гибкости
-        0, // amountBNBMin - 0 для максимальной гибкости
-        0, // amountOutMinBNB - 0 для максимальной гибкости
-        gasParams
-      );
-
-      // Ждем подтверждения транзакции
-      // Для Ethereum и Base используем 1 подтверждение для ускорения
-      // Для BSC можно использовать больше подтверждений
-      const confirmations = this.networkConfig.supportsEIP1559 ? 1 : 1;
-      const receipt = await tx.wait(confirmations);
-
-      // Проверяем статус транзакции
-      if (receipt.status === 0) {
-        throw new Error('Транзакция была отклонена контрактом');
-      }
-
-      return tx.hash;
-    } catch (error) {
-      // Улучшаем сообщение об ошибке
-      if (error.message.includes('user rejected') || error.message.includes('User denied')) {
-        throw new Error('Транзакция отклонена пользователем');
-      }
-      if (error.message.includes('NO_LP') || error.message.includes('NO_LP_BALANCE')) {
-        throw new Error('У вас нет LP токенов для продажи. Сначала купите токены через zap-in.');
-      }
-      if (error.message.includes('INVALID_PERCENT')) {
-        throw new Error('Неверный процент. Доступные значения: 5, 25, 50, 75');
-      }
-      if (error.message.includes('INSUFFICIENT_LP_TO_SELL')) {
-        throw new Error('Недостаточно LP токенов для продажи выбранного процента');
-      }
-      if (error.receipt && error.receipt.status === 0) {
-        throw new Error('Транзакция была отклонена. Возможные причины:\n• Недостаточно ликвидности в пуле\n• Проблема с контрактом');
-      }
-      throw new Error(`Ошибка частичной продажи: ${error.message}`);
-    }
-  }
-
-  async getTokenInfo(tokenAddress) {
-    if (!this.multiZapContract) {
-      throw new Error('Контракт не подключен');
-    }
-
-    if (!ethers.isAddress(tokenAddress)) {
-      throw new Error('Неверный адрес токена');
-    }
-
-    try {
-      return await this.retryCall(() => this.multiZapContract.getTokenInfo(tokenAddress));
-    } catch (error) {
-      // Если rate limit или другие ошибки, возвращаем базовую информацию
-      if (error.message.includes('rate limit') || error.message.includes('missing revert data')) {
-        console.warn('Ошибка получения tokenInfo, используем fallback:', error.message);
-        return {
-          token: tokenAddress,
-          lpToken: '0x0000000000000000000000000000000000000000',
-          isActive: true
-        };
-      }
-      throw new Error(`Ошибка получения информации о токене: ${error.message}`);
-    }
-  }
-
-  async getAllTokens() {
-    if (!this.multiZapContract) {
-      throw new Error('Контракт не подключен');
-    }
-
-    try {
-      return await this.multiZapContract.getAllTokens();
-    } catch (error) {
-      throw new Error(`Ошибка получения списка токенов: ${error.message}`);
-    }
-  }
-
-  async getLpBalance(tokenAddress) {
-    if (!this.multiZapContract) {
-      throw new Error('Контракт не подключен');
-    }
-
-    if (!ethers.isAddress(tokenAddress)) {
-      throw new Error('Неверный адрес токена');
-    }
-
-    try {
-      const balance = await this.retryCall(() => this.multiZapContract.getLpBalance(tokenAddress));
-      return ethers.formatEther(balance);
-    } catch (error) {
-      // Если rate limit или другие ошибки, возвращаем 0
-      if (error.message.includes('rate limit') || error.message.includes('missing revert data')) {
-        console.warn('Ошибка получения LP баланса, возвращаем 0:', error.message);
-        return '0';
-      }
-      throw new Error(`Ошибка получения LP баланса: ${error.message}`);
-    }
-  }
-
-  async getTokenBalance(tokenAddress) {
-    if (!this.multiZapContract) {
-      throw new Error('Контракт не подключен');
-    }
-
-    if (!ethers.isAddress(tokenAddress)) {
-      throw new Error('Неверный адрес токена');
-    }
-
-    try {
-      const balance = await this.retryCall(() => this.multiZapContract.getTokenBalance(tokenAddress));
-      return ethers.formatEther(balance);
-    } catch (error) {
-      // Если rate limit или другие ошибки, возвращаем 0
-      if (error.message.includes('rate limit') || error.message.includes('missing revert data')) {
-        console.warn('Ошибка получения баланса токена, возвращаем 0:', error.message);
-        return '0';
-      }
-      throw new Error(`Ошибка получения баланса токена: ${error.message}`);
-    }
-  }
-
-  async getEthBalance() {
-    if (!this.multiZapContract) {
-      throw new Error('Контракт не подключен');
-    }
-
-    try {
-      const balance = await this.provider.getBalance(await this.multiZapContract.getAddress());
-      return ethers.formatEther(balance);
-    } catch (error) {
-      throw new Error(`Ошибка получения ETH баланса: ${error.message}`);
-    }
-  }
-
   async getWalletBalance() {
     if (!this.wallet) {
       throw new Error('Приватный ключ не установлен');
@@ -1071,10 +663,10 @@ class Web3Manager {
       if (this.networkConfig.supportsEIP1559) {
         // Для Ethereum и Base используем динамические значения из сети
         if (feeData.maxFeePerGas != null && feeData.maxPriorityFeePerGas != null) {
-          // Увеличиваем maxFeePerGas на 50% для надежности (Ethereum может быть очень загружен)
-          const maxFeePerGas = feeData.maxFeePerGas + (feeData.maxFeePerGas / 2n);
-          // Увеличиваем maxPriorityFeePerGas на 30% для более быстрого включения в блок
-          const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas + (feeData.maxPriorityFeePerGas * 3n / 10n);
+          // Увеличиваем maxFeePerGas на 20% для небольшого запаса
+          const maxFeePerGas = feeData.maxFeePerGas + (feeData.maxFeePerGas / 5n);
+          // Увеличиваем maxPriorityFeePerGas на 10% для аккуратного tip
+          const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas + (feeData.maxPriorityFeePerGas / 10n);
 
           return {
             maxFeePerGas: maxFeePerGas,
@@ -1506,6 +1098,37 @@ class Web3Manager {
       };
     }
   }
+
+  async getTokenInfo(tokenAddress) {
+    if (!this.multiZapContract) {
+      throw new Error('Contract is not connected');
+    }
+    return await this.retryCall(() => this.multiZapContract.getTokenInfo(tokenAddress));
+  }
+
+  async getAllTokens() {
+    if (!this.multiZapContract) {
+      throw new Error('Contract is not connected');
+    }
+    return await this.retryCall(() => this.multiZapContract.getAllTokens());
+  }
+
+  async getLpBalance(tokenAddress) {
+    if (!this.multiZapContract) {
+      throw new Error('Contract is not connected');
+    }
+    const balance = await this.retryCall(() => this.multiZapContract.getLpBalance(tokenAddress));
+    return ethers.formatEther(balance);
+  }
+
+  async getTokenBalance(tokenAddress) {
+    if (!this.multiZapContract) {
+      throw new Error('Contract is not connected');
+    }
+    const balance = await this.retryCall(() => this.multiZapContract.getTokenBalance(tokenAddress));
+    return ethers.formatEther(balance);
+  }
 }
 
 module.exports = Web3Manager;
+

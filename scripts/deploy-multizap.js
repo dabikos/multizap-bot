@@ -7,9 +7,8 @@ async function main() {
   const privateKey = await getPrivateKeyInteractive();
   const router = await prompt('Адрес роутера (например, PancakeSwap V2): ');
   const factory = await prompt('Адрес фабрики (например, PancakeSwap Factory): ');
-  const usdtAddress = await prompt('Адрес USDT токена (BSC: 0x55d398326f99059fF775485246999027B3197955): ');
 
-  if (!privateKey || !router || !factory || !usdtAddress) {
+  if (!privateKey || !router || !factory) {
     console.error('Ошибка: все поля обязательны');
     process.exit(1);
   }
@@ -20,10 +19,17 @@ async function main() {
   console.log('Развертывание контракта MultiZap на BSC...');
   console.log(`Router: ${router}`);
   console.log(`Factory: ${factory}`);
-  console.log(`USDT: ${usdtAddress}`);
+
+  const routerContract = new ethers.Contract(
+    router,
+    ['function WETH() view returns (address)'],
+    wallet
+  );
+  const wethAddress = await routerContract.WETH();
+  console.log(`WETH/WBNB: ${wethAddress}`);
   
   const MultiZapFactory = await ethers.getContractFactory('MultiZap', wallet);
-  const multiZap = await MultiZapFactory.deploy(router, factory, usdtAddress);
+  const multiZap = await MultiZapFactory.deploy(router, factory, wethAddress);
   await multiZap.waitForDeployment();
   const address = await multiZap.getAddress();
 
@@ -42,4 +48,3 @@ main().catch((e) => {
   console.error(e);
   process.exit(1);
 });
-
