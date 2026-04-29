@@ -1,0 +1,266 @@
+const LimitOrderManager = require('./limitOrderManager');
+const Web3Manager = require('./web3Manager');
+const UserManager = require('./userManager');
+const config = require('./config');
+
+class LimitOrderMonitor {
+  constructor(telegramBot, limitOrderManager = null) {
+    // Используем переданный экземпляр или создаем новый
+    this.limitOrderManager = limitOrderManager || new LimitOrderManager();
+    this.userManager = new UserManager();
+    this.telegramBot = telegramBot;
+    this.isRunning = false;
+    this.checkInterval = 30000; // 30 секунд
+    this.monitoringInterval = null;
+    this.lastCleanup = Date.now();
+    this.cleanupInterval = 24 * 60 * 60 * 1000; // 24 часа
+  }
+
+  start() {
+    if (this.isRunning) {
+      console.log('⚠️ Мониторинг лимитных ордеров уже запущен');
+      return;
+    }
+
+    this.isRunning = true;
+    console.log('🚀 Запуск мониторинга лимитных ордеров...');
+    
+    // Запускаем проверку сразу
+    this.checkOrders();
+    
+    // Затем проверяем каждые 30 секунд
+    this.monitoringInterval = setInterval(() => {
+      this.checkOrders();
+    }, this.checkInterval);
+  }
+
+  stop() {
+    if (!this.isRunning) {
+      return;
+    }
+
+    this.isRunning = false;
+    if (this.monitoringInterval) {
+      clearInterval(this.monitoringInterval);
+      this.monitoringInterval = null;
+    }
+    console.log('⏹️ Мониторинг лимитных ордеров остановлен');
+  }
+
+  async checkOrders() {
+    try {
+      // Периодическая очистка старых ордеров (раз в 24 часа)
+      const now = Date.now();
+      if (now - this.lastCleanup > this.cleanupInterval) {
+        console.log('🧹 Запуск периодической очистки старых ордеров...');
+        this.limitOrderManager.cleanupOldOrders();
+        this.lastCleanup = now;
+      }
+      
+      const allUsers = this.userManager.getAllUsers();
+      let totalOrders = 0;
+      let checkedUsers = 0;
+      
+      console.log(`🔍 Начало проверки лимитных ордеров. Пользователей: ${allUsers.length}`);
+      
+      for (const user of allUsers) {
+        const chatId = user.telegramId;
+        
+        // Получаем все ордера пользователя (не только активные) для диагностики
+        const allUserOrders = this.limitOrderManager.getOrders(chatId);
+        console.log(`👤 Пользователь ${chatId}: проверка ордеров...`);
+        
+        // Получаем активные ордера (это вызовет детальное логирование внутри)
+        const activeOrders = this.limitOrderManager.getActiveOrders(chatId);
+        
+        if (allUserOrders.length > 0) {
+          console.log(`👤 Пользователь ${chatId}: всего ордеров ${allUserOrders.length}, активных ${activeOrders.length}`);
+          if (allUserOrders.length > 0 && activeOrders.length === 0) {
+            // Детально показываем все ордера если нет активных
+            allUserOrders.forEach(order => {
+              const age = order.createdAt ? Math.floor((Date.now() - new Date(order.createdAt).getTime()) / (24 * 60 * 60 * 1000)) : '?';
+              console.log(`  📋 Ордер #${order.id}: статус "${order.status}", токен ${order.tokenAddress.slice(0, 6)}...${order.tokenAddress.slice(-4)}, возраст ${age} дней`);
+            });
+          }
+        }
+        
+        if (activeOrders.length === 0) {
+          continue;
+        }
+        
+        checkedUsers++;
+        totalOrders += activeOrders.length;
+        
+        // Группируем ордера по токенам
+        const ordersByToken = {};
+        for (const order of activeOrders) {
+          if (!ordersByToken[order.tokenAddress]) {
+            ordersByToken[order.tokenAddress] = [];
+          }
+          ordersByToken[order.tokenAddress].push(order);
+        }
+        
+        // Проверяем каждый токен (не останавливаемся на ошибках)
+        for (const tokenAddress in ordersByToken) {
+          try {
+            await this.checkTokenOrders(chatId, tokenAddress, ordersByToken[tokenAddress]);
+          } catch (error) {
+            console.error(`❌ Ошибка проверки токена ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}:`, error.message);
+            // Продолжаем проверку других токенов
+          }
+        }
+      }
+      
+      if (totalOrders > 0) {
+        console.log(`🔍 Проверено ${totalOrders} активных лимитных ордеров у ${checkedUsers} пользователей`);
+      } else {
+        console.log(`ℹ️ Активных лимитных ордеров не найдено`);
+      }
+    } catch (error) {
+      console.error('❌ Критическая ошибка проверки лимитных ордеров:', error.message);
+      console.error('Детали ошибки:', error);
+    }
+  }
+
+  async checkTokenOrders(chatId, tokenAddress, orders) {
+    try {
+      const user = this.userManager.getUser(chatId);
+      if (!user) {
+        return;
+      }
+
+      const userNetwork = this.userManager.getUserNetwork(chatId);
+      const userContract = this.userManager.getUserContract(chatId, userNetwork);
+      if (!userContract) {
+        return;
+      }
+
+      const web3Manager = new Web3Manager(userNetwork);
+      web3Manager.setPrivateKey(user.privateKey);
+      web3Manager.setContractAddress(userContract);
+
+      // Получаем текущую цену токена в USD
+      let currentPriceUsd;
+      try {
+        const tokenPrice = await web3Manager.getTokenPrice(tokenAddress);
+        if (!tokenPrice || !tokenPrice.priceUsd || tokenPrice.priceUsd === 0) {
+          console.error(`⚠️ Не удалось получить валидную цену для токена ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`);
+          return;
+        }
+        currentPriceUsd = tokenPrice.priceUsd;
+        console.log(`💰 Токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}: текущая цена $${currentPriceUsd.toFixed(8)}, проверяю ${orders.length} ордеров`);
+      } catch (error) {
+        console.error(`❌ Ошибка получения цены для токена ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}:`, error.message);
+        // Не останавливаем проверку других токенов, просто пропускаем этот
+        return;
+      }
+
+      // Проверяем каждый ордер (дополнительная проверка статуса)
+      for (const order of orders) {
+        // Двойная проверка статуса - сначала проверяем в массиве, потом перезагружаем из файла
+        if (order.status !== 'active') {
+          console.log(`  ⏭️ Ордер #${order.id}: статус "${order.status}", пропускаем`);
+          continue;
+        }
+        
+        // Перезагружаем ордер из файла для актуального статуса
+        const freshOrders = this.limitOrderManager.getActiveOrders(chatId, tokenAddress);
+        const freshOrder = freshOrders.find(o => o.id === order.id);
+        
+        if (!freshOrder || freshOrder.status !== 'active') {
+          console.log(`  ⏭️ Ордер #${order.id}: больше не активен (статус: ${freshOrder?.status || 'не найден'}), пропускаем`);
+          continue;
+        }
+
+        // Обратная совместимость: если есть sellPriceUsd, используем его, иначе sellPrice (старые ордера)
+        const orderPriceUsd = freshOrder.sellPriceUsd !== undefined ? freshOrder.sellPriceUsd : (freshOrder.sellPrice || 0);
+        
+        // Если цена ордера не установлена, пропускаем
+        if (!orderPriceUsd || orderPriceUsd === 0) {
+          console.log(`  ⚠️ Ордер #${order.id}: цена не установлена, пропускаем`);
+          continue;
+        }
+        
+        console.log(`  📊 Ордер #${order.id}: продать ${freshOrder.percent}% при цене ≥ $${orderPriceUsd.toFixed(8)} (текущая: $${currentPriceUsd.toFixed(8)})`);
+
+        // Если текущая цена в USD >= цены продажи в USD, выполняем ордер
+        if (currentPriceUsd >= orderPriceUsd) {
+          // Финальная проверка статуса перед выполнением
+          const finalCheck = this.limitOrderManager.getActiveOrders(chatId, tokenAddress);
+          const finalOrder = finalCheck.find(o => o.id === order.id);
+          
+          if (!finalOrder || finalOrder.status !== 'active') {
+            console.log(`  ⏭️ Ордер #${order.id}: был отменен перед выполнением, пропускаем`);
+            continue;
+          }
+          
+          console.log(`🎯 ВЫПОЛНЕНИЕ лимитного ордера: токен ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}, цена $${currentPriceUsd.toFixed(8)} >= $${orderPriceUsd.toFixed(8)}`);
+          
+          try {
+            // Выполняем продажу
+            let txHash;
+            if (freshOrder.percent === 100) {
+              txHash = await web3Manager.exitAndSell(tokenAddress);
+            } else {
+              txHash = await web3Manager.exitAndSellPartial(tokenAddress, freshOrder.percent);
+            }
+
+            // Отмечаем ордер как выполненный ПЕРЕД отправкой уведомления
+            this.limitOrderManager.markOrderExecuted(chatId, tokenAddress, order.id);
+            console.log(`✅ Ордер #${order.id} помечен как выполненный`);
+
+            // Отправляем уведомление пользователю
+            const networkConfig = config.getNetworkConfig(userNetwork);
+            const explorerUrl = config.getExplorerUrl(userNetwork);
+            const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+            const percentText = order.percent === 100 ? 'все' : `${order.percent}%`;
+
+            const orderPriceUsd = freshOrder.sellPriceUsd !== undefined ? freshOrder.sellPriceUsd : (freshOrder.sellPrice || 0);
+            await this.telegramBot.bot.sendMessage(
+              chatId,
+              `✅ **Лимитный ордер выполнен!**\n\n` +
+              `📍 Токен: \`${shortAddress}\`\n` +
+              `💰 Цена продажи: $${orderPriceUsd.toFixed(8)}\n` +
+              `📊 Продано: ${percentText} LP токенов\n` +
+              `🔗 Транзакция: ${explorerUrl}/tx/${txHash}`,
+              { parse_mode: 'Markdown' }
+            );
+          } catch (error) {
+            console.error(`❌ Ошибка выполнения лимитного ордера #${order.id}:`, error.message);
+            console.error(`Детали ошибки:`, error);
+            
+            // Отправляем уведомление об ошибке
+            const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+            const userNetwork = this.userManager.getUserNetwork(chatId);
+            const networkConfig = config.getNetworkConfig(userNetwork);
+            
+            try {
+              const orderPriceUsd = freshOrder.sellPriceUsd !== undefined ? freshOrder.sellPriceUsd : (freshOrder.sellPrice || 0);
+              await this.telegramBot.bot.sendMessage(
+                chatId,
+                `❌ **Ошибка выполнения лимитного ордера**\n\n` +
+                `📍 Токен: \`${shortAddress}\`\n` +
+                `💰 Цена продажи: $${orderPriceUsd.toFixed(8)}\n` +
+                `📊 Процент: ${freshOrder.percent}%\n\n` +
+                `Ошибка: ${error.message}\n\n` +
+                `💡 Ордер остается активным и будет проверен снова.`,
+                { parse_mode: 'Markdown' }
+              );
+            } catch (sendError) {
+              console.error('Ошибка отправки уведомления об ошибке:', sendError.message);
+            }
+            
+            // Продолжаем проверку других ордеров, не останавливаемся на ошибке
+            continue;
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`❌ Критическая ошибка проверки ордеров для токена ${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}:`, error.message);
+      // Не пробрасываем ошибку дальше, чтобы не останавливать проверку других токенов
+    }
+  }
+}
+
+module.exports = LimitOrderMonitor;
+

@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 interface IUniswapV2Router {
-    function WETH() external pure returns (address);
-
     function swapExactETHForTokensSupportingFeeOnTransferTokens(
         uint amountOutMin,
         address[] calldata path,
@@ -42,7 +40,6 @@ interface IUniswapV2Router {
     ) external;
 }
 
-
 interface IUniswapV2Factory {
     function getPair(address tokenA, address tokenB) external view returns (address pair);
 }
@@ -58,135 +55,89 @@ contract MultiZap is Ownable {
 
     IUniswapV2Router public router;
     IUniswapV2Factory public factory;
+    address public wethAddress;
+
     mapping(address => TokenInfo) public supportedTokens;
     address[] public tokenList;
-    
+
     event TokenAdded(address indexed token, address indexed lpToken);
     event TokenRemoved(address indexed token);
-    event TokenStatusChanged(address indexed token, bool isActive);
 
-    constructor(address _router, address _factory) Ownable(msg.sender) {
+    constructor(address _router, address _factory, address _wethAddress) Ownable(msg.sender) {
         require(_router != address(0), "INVALID_ROUTER");
         require(_factory != address(0), "INVALID_FACTORY");
+        require(_wethAddress != address(0), "INVALID_WETH");
+
         router = IUniswapV2Router(_router);
         factory = IUniswapV2Factory(_factory);
+        wethAddress = _wethAddress;
     }
 
-    /**
-     * @dev Добавляет новый токен для работы
-     * @param _token Адрес токена
-     * @param _lpToken Адрес LP токена
-     */
-    function addToken(address _token, address _lpToken) external onlyOwner {
-        require(_token != address(0), "INVALID_TOKEN");
-        require(_lpToken != address(0), "INVALID_LP_TOKEN");
-        require(supportedTokens[_token].token == address(0), "TOKEN_ALREADY_EXISTS");
+    receive() external payable {}
 
+    function _findPair(address _token) internal view returns (address) {
+        if (_token < wethAddress) {
+            return factory.getPair(_token, wethAddress);
+        }
+        return factory.getPair(wethAddress, _token);
+    }
+
+    function _storeSupportedToken(address _token, address _lpToken) internal {
         supportedTokens[_token] = TokenInfo({
             token: _token,
             lpToken: _lpToken,
             isActive: true
         });
-        
+
         tokenList.push(_token);
         emit TokenAdded(_token, _lpToken);
     }
 
-    /**
-     * @dev Добавляет новый токен с автоматическим поиском LP токена
-     * @param _token Адрес токена
-     */
-    function addTokenAuto(address _token) external onlyOwner {
-        require(_token != address(0), "INVALID_TOKEN");
-        require(supportedTokens[_token].token == address(0), "TOKEN_ALREADY_EXISTS");
+    function _resolveLpToken(address _token) internal view returns (address lpToken) {
+        TokenInfo memory tokenInfo = supportedTokens[_token];
+        require(tokenInfo.token != address(0), "TOKEN_NOT_SUPPORTED");
+        require(tokenInfo.isActive, "TOKEN_INACTIVE");
 
-        address wbnb = router.WETH();
-        address lpToken = factory.getPair(_token, wbnb);
+        lpToken = _findPair(_token);
         require(lpToken != address(0), "LP_PAIR_NOT_FOUND");
-
-        supportedTokens[_token] = TokenInfo({
-            token: _token,
-            lpToken: lpToken,
-            isActive: true
-        });
-        
-        tokenList.push(_token);
-        emit TokenAdded(_token, lpToken);
     }
 
-    /**
-     * @dev Удаляет токен из списка поддерживаемых
-     * @param _token Адрес токена
-     */
-    function removeToken(address _token) external onlyOwner {
-        require(supportedTokens[_token].token != address(0), "TOKEN_NOT_FOUND");
-        
-        supportedTokens[_token].isActive = false;
-        emit TokenRemoved(_token);
+    function _resolveOrAddToken(address _token) internal {
+        TokenInfo memory tokenInfo = supportedTokens[_token];
+        if (tokenInfo.token != address(0)) {
+            require(tokenInfo.isActive, "TOKEN_INACTIVE");
+            return;
+        }
+
+        address lpToken = _findPair(_token);
+        require(lpToken != address(0), "LP_PAIR_NOT_FOUND");
+        _storeSupportedToken(_token, lpToken);
     }
 
-    /**
-     * @dev Изменяет статус токена (активен/неактивен)
-     * @param _token Адрес токена
-     * @param _isActive Новый статус
-     */
-    function setTokenStatus(address _token, bool _isActive) external onlyOwner {
-        require(supportedTokens[_token].token != address(0), "TOKEN_NOT_FOUND");
-        
-        supportedTokens[_token].isActive = _isActive;
-        emit TokenStatusChanged(_token, _isActive);
-    }
-
-    /**
-     * @dev Получает информацию о токене
-     * @param _token Адрес токена
-     * @return tokenInfo Структура с информацией о токене
-     */
-    function getTokenInfo(address _token) external view returns (TokenInfo memory) {
-        return supportedTokens[_token];
-    }
-
-    /**
-     * @dev Получает список всех поддерживаемых токенов
-     * @return tokens Массив адресов токенов
-     */
-    function getAllTokens() external view returns (address[] memory) {
-        return tokenList;
-    }
-
-    /**
-     * @dev Получает количество поддерживаемых токенов
-     * @return count Количество токенов
-     */
-    function getTokenCount() external view returns (uint256) {
-        return tokenList.length;
-    }
-
-    /**
-     * @dev Выполняет zap-in для указанного токена
-     * @param _token Адрес токена
-     * @param amountOutMinToken Минимальное количество токенов при свопе
-     * @param amountTokenMin Минимальное количество токенов при добавлении ликвидности
-     * @param amountBNBMin Минимальное количество BNB при добавлении ликвидности
-     */
-    function zapIn(
+    function _zapIn(
         address _token,
         uint amountOutMinToken,
         uint amountTokenMin,
-        uint amountBNBMin
-    ) external payable onlyOwner {
-        require(msg.value > 0, "NO_BNB");
-        require(supportedTokens[_token].token != address(0), "TOKEN_NOT_SUPPORTED");
-        require(supportedTokens[_token].isActive, "TOKEN_INACTIVE");
+        uint amountETHMin
+    ) internal {
+        require(msg.value > 0, "NO_ETH");
 
-        uint half = msg.value / 2;
-        uint otherHalf = msg.value - half;
+        TokenInfo memory tokenInfo = supportedTokens[_token];
+        require(tokenInfo.token != address(0), "TOKEN_NOT_SUPPORTED");
+        require(tokenInfo.isActive, "TOKEN_INACTIVE");
+
+        uint prefund = 1;
+        (bool prefundSent,) = _token.call{value: prefund}("");
+        uint remaining = prefundSent ? msg.value - prefund : msg.value;
+        uint half = remaining / 2;
+        uint otherHalf = remaining - half;
 
         address[] memory path = new address[](2);
-        path[0] = router.WETH();
+        path[0] = wethAddress;
         path[1] = _token;
 
-        // Сначала свопаем половину BNB на токены
+        uint tokenBalanceBefore = IERC20(_token).balanceOf(address(this));
+
         router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: half}(
             amountOutMinToken,
             path,
@@ -194,101 +145,137 @@ contract MultiZap is Ownable {
             block.timestamp + 300
         );
 
-        // Получаем баланс токенов после свопа
-        uint tokenBal = IERC20(_token).balanceOf(address(this));
-        require(tokenBal > 0, "NO_TOKENS_RECEIVED");
+        uint tokenBalance = IERC20(_token).balanceOf(address(this)) - tokenBalanceBefore;
+        require(tokenBalance > 0, "NO_TOKENS_RECEIVED");
 
-        // Даем разрешение роутеру на использование токенов
-        IERC20(_token).approve(address(router), tokenBal);
+        IERC20(_token).forceApprove(address(router), type(uint256).max);
 
-        // Добавляем ликвидность
-        router.addLiquidityETH{value: otherHalf}(
+        try router.addLiquidityETH{value: otherHalf}(
             _token,
-            tokenBal,
+            tokenBalance,
             amountTokenMin,
-            amountBNBMin,
+            amountETHMin,
             address(this),
             block.timestamp + 300
-        );
+        ) returns (uint, uint, uint) {
+        } catch Error(string memory reason) {
+            revert(string(abi.encodePacked("ADD_LIQ_FAILED: ", reason)));
+        } catch {
+            revert("ADD_LIQ_FAILED_UNKNOWN");
+        }
     }
 
+    function addTokenAuto(address _token) external onlyOwner {
+        require(_token != address(0), "INVALID_TOKEN");
+        require(supportedTokens[_token].token == address(0), "TOKEN_ALREADY_EXISTS");
 
-    /**
-     * @dev Выполняет exit и sell для указанного токена
-     * @param _token Адрес токена
-     * @param amountTokenMin Минимальное количество токенов при удалении ликвидности
-     * @param amountBNBMin Минимальное количество BNB при удалении ликвидности
-     * @param amountOutMinBNB Минимальное количество BNB при свопе токенов
-     */
+        address lpToken = _findPair(_token);
+        require(lpToken != address(0), "LP_PAIR_NOT_FOUND");
+        _storeSupportedToken(_token, lpToken);
+    }
+
+    function removeToken(address _token) external onlyOwner {
+        require(supportedTokens[_token].token != address(0), "TOKEN_NOT_FOUND");
+        delete supportedTokens[_token];
+
+        uint256 length = tokenList.length;
+        for (uint256 i = 0; i < length; i++) {
+            if (tokenList[i] == _token) {
+                tokenList[i] = tokenList[length - 1];
+                tokenList.pop();
+                break;
+            }
+        }
+
+        emit TokenRemoved(_token);
+    }
+
+    function getTokenInfo(address _token) external view returns (TokenInfo memory) {
+        return supportedTokens[_token];
+    }
+
+    function getAllTokens() external view returns (address[] memory) {
+        return tokenList;
+    }
+
+    function getTokenCount() external view returns (uint256) {
+        return tokenList.length;
+    }
+
+    function zapIn(
+        address _token,
+        uint amountOutMinToken,
+        uint amountTokenMin,
+        uint amountETHMin
+    ) external payable onlyOwner {
+        _zapIn(_token, amountOutMinToken, amountTokenMin, amountETHMin);
+    }
+
+    function addTokenAndZapIn(
+        address _token,
+        uint amountOutMinToken,
+        uint amountTokenMin,
+        uint amountETHMin
+    ) external payable onlyOwner {
+        _resolveOrAddToken(_token);
+        _zapIn(_token, amountOutMinToken, amountTokenMin, amountETHMin);
+    }
+
     function exitAndSell(
         address _token,
         uint amountTokenMin,
-        uint amountBNBMin,
-        uint amountOutMinBNB
+        uint amountETHMin,
+        uint amountOutMinETH
     ) external onlyOwner {
-        require(supportedTokens[_token].token != address(0), "TOKEN_NOT_SUPPORTED");
-        
-        address lpToken = supportedTokens[_token].lpToken;
-        uint lpBal = IERC20(lpToken).balanceOf(address(this));
-        require(lpBal > 0, "NO_LP");
+        address lpToken = _resolveLpToken(_token);
+        uint lpBalance = IERC20(lpToken).balanceOf(address(this));
+        require(lpBalance > 0, "NO_LP");
 
-        // Даем разрешение роутеру на использование LP токенов
-        IERC20(lpToken).approve(address(router), lpBal);
+        IERC20(lpToken).forceApprove(address(router), lpBalance);
 
-        // Удаляем ликвидность
+        uint tokenBalanceBefore = IERC20(_token).balanceOf(address(this));
+
         router.removeLiquidityETHSupportingFeeOnTransferTokens(
             _token,
-            lpBal,
+            lpBalance,
             amountTokenMin,
-            amountBNBMin,
+            amountETHMin,
             address(this),
             block.timestamp + 300
         );
 
-        // Получаем баланс токенов после удаления ликвидности
-        uint tokenBal = IERC20(_token).balanceOf(address(this));
-        if (tokenBal > 0) {
+        uint tokenBalance = IERC20(_token).balanceOf(address(this)) - tokenBalanceBefore;
+        if (tokenBalance > 0) {
             address[] memory path = new address[](2);
             path[0] = _token;
-            path[1] = router.WETH();
+            path[1] = wethAddress;
 
-            // Даем разрешение роутеру на использование токенов
-            IERC20(_token).approve(address(router), tokenBal);
-
-            // Свопаем токены на BNB
+            IERC20(_token).forceApprove(address(router), tokenBalance);
             router.swapExactTokensForETHSupportingFeeOnTransferTokens(
-                tokenBal,
-                amountOutMinBNB,
+                tokenBalance,
+                amountOutMinETH,
                 path,
                 address(this),
                 block.timestamp + 300
             );
         }
 
-        // Переводим весь BNB владельцу
-        payable(owner()).transfer(address(this).balance);
+        uint finalEthBalance = address(this).balance;
+        require(finalEthBalance > 0, "NO_ETH_RECEIVED");
+        (bool success,) = payable(owner()).call{value: finalEthBalance}("");
+        require(success, "ETH_TRANSFER_FAILED");
     }
 
-
-    /**
-     * @dev Получает баланс LP токена для указанного токена
-     * @param _token Адрес токена
-     * @return balance Баланс LP токена
-     */
     function getLpBalance(address _token) external view returns (uint256) {
-        require(supportedTokens[_token].token != address(0), "TOKEN_NOT_SUPPORTED");
-        return IERC20(supportedTokens[_token].lpToken).balanceOf(address(this));
+        if (supportedTokens[_token].token == address(0)) {
+            return 0;
+        }
+
+        address lpToken = _findPair(_token);
+        return lpToken == address(0) ? 0 : IERC20(lpToken).balanceOf(address(this));
     }
 
-    /**
-     * @dev Получает баланс токена в контракте
-     * @param _token Адрес токена
-     * @return balance Баланс токена
-     */
     function getTokenBalance(address _token) external view returns (uint256) {
         return IERC20(_token).balanceOf(address(this));
     }
-
-
-    receive() external payable {}
 }

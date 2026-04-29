@@ -6,7 +6,7 @@ console.log('🧪 Тестирование мультичейн функцион
 
 // Тест 1: Проверка конфигурации сетей
 console.log('1️⃣ Тест конфигурации сетей:');
-const networks = ['ETH', 'BSC', 'BASE'];
+const networks = ['ETH', 'BSC', 'BASE', 'MONAD'];
 networks.forEach(network => {
   const netConfig = config.getNetworkConfig(network);
   console.log(`   ✅ ${network}: ${netConfig.name}`);

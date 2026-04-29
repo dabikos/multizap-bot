@@ -7,7 +7,8 @@ module.exports = {
   solidity: {
     version: "0.8.24",
     settings: {
-      optimizer: { enabled: true, runs: 200 }
+      optimizer: { enabled: true, runs: 200 },
+      viaIR: true
     }
   },
   networks: {
@@ -15,6 +16,14 @@ module.exports = {
     bsc: {
       url: "https://bsc-dataseed1.binance.org",
       chainId: 56
+    },
+    monad: {
+      url: process.env.MONAD_RPC_URL || "https://rpc-mainnet.monadinfra.com",
+      chainId: 143
+    },
+    megaeth: {
+      url: process.env.MEGAETH_RPC_URL || "https://mainnet.megaeth.com/rpc",
+      chainId: 4326
     }
   }
 };

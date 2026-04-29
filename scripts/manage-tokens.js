@@ -7,7 +7,10 @@ const { getPrivateKeyInteractive } = require('./util-session');
 function prompt(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
-    rl.question(question, (answer) => { rl.close(); resolve(answer.trim()); });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
   });
 }
 
@@ -22,10 +25,10 @@ async function main() {
   const { abi } = getContractInterface();
 
   const privateKey = await getPrivateKeyInteractive();
-  const multiZapAddress = await prompt('Адрес развернутого MultiZap: ');
+  const multiZapAddress = await prompt('MultiZap contract address: ');
 
   if (!privateKey || !multiZapAddress) {
-    console.error('Ошибка: все поля обязательны');
+    console.error('Error: private key and contract address are required');
     process.exit(1);
   }
 
@@ -34,168 +37,139 @@ async function main() {
   const multiZap = new ethers.Contract(multiZapAddress, abi, wallet);
 
   while (true) {
-    console.log('\n=== Управление токенами MultiZap ===');
-    console.log('1. Добавить токен');
-    console.log('2. Удалить токен');
-    console.log('3. Изменить статус токена');
-    console.log('4. Показать все токены');
-    console.log('5. Показать информацию о токене');
-    console.log('6. Показать балансы');
-    console.log('0. Выход');
+    console.log('\n=== MultiZap token management ===');
+    console.log('1. Add token');
+    console.log('2. Remove token');
+    console.log('3. Show all tokens');
+    console.log('4. Show token info');
+    console.log('5. Show balances');
+    console.log('0. Exit');
 
-    const choice = await prompt('Выберите действие (0-6): ');
+    const choice = await prompt('Choose action (0-5): ');
 
     switch (choice) {
       case '1':
-        await addToken(multiZap);
+        await addTokenAuto(multiZap);
         break;
       case '2':
         await removeToken(multiZap);
         break;
       case '3':
-        await changeTokenStatus(multiZap);
-        break;
-      case '4':
         await showAllTokens(multiZap);
         break;
-      case '5':
+      case '4':
         await showTokenInfo(multiZap);
         break;
-      case '6':
+      case '5':
         await showBalances(multiZap);
         break;
       case '0':
-        console.log('Выход...');
+        console.log('Exit...');
         process.exit(0);
       default:
-        console.log('Неверный выбор');
+        console.log('Invalid choice');
     }
   }
 }
 
-async function addToken(multiZap) {
+async function addTokenAuto(multiZap) {
   try {
-    const token = await prompt('Адрес токена: ');
-    const lpToken = await prompt('Адрес LP токена: ');
+    const token = await prompt('Token address: ');
 
-    if (!token || !lpToken) {
-      console.error('Ошибка: все поля обязательны');
+    if (!token) {
+      console.error('Error: token address is required');
       return;
     }
 
-    const tx = await multiZap.addToken(token, lpToken);
-    console.log('Транзакция отправлена:', tx.hash);
+    const tx = await multiZap.addTokenAuto(token);
+    console.log('Transaction sent:', tx.hash);
     await tx.wait();
-    console.log('УСПЕШНО: токен добавлен');
+    console.log('Success: token added');
   } catch (error) {
-    console.error('Ошибка при добавлении токена:', error.message);
+    console.error('Add token error:', error.message);
   }
 }
 
 async function removeToken(multiZap) {
   try {
-    const token = await prompt('Адрес токена для удаления: ');
+    const token = await prompt('Token address to remove: ');
 
     if (!token) {
-      console.error('Ошибка: адрес токена обязателен');
+      console.error('Error: token address is required');
       return;
     }
 
     const tx = await multiZap.removeToken(token);
-    console.log('Транзакция отправлена:', tx.hash);
+    console.log('Transaction sent:', tx.hash);
     await tx.wait();
-    console.log('УСПЕШНО: токен удален');
+    console.log('Success: token removed');
   } catch (error) {
-    console.error('Ошибка при удалении токена:', error.message);
-  }
-}
-
-async function changeTokenStatus(multiZap) {
-  try {
-    const token = await prompt('Адрес токена: ');
-    const status = await prompt('Новый статус (true/false): ');
-
-    if (!token || !status) {
-      console.error('Ошибка: все поля обязательны');
-      return;
-    }
-
-    const isActive = status.toLowerCase() === 'true';
-    const tx = await multiZap.setTokenStatus(token, isActive);
-    console.log('Транзакция отправлена:', tx.hash);
-    await tx.wait();
-    console.log(`УСПЕШНО: статус токена изменен на ${isActive ? 'активен' : 'неактивен'}`);
-  } catch (error) {
-    console.error('Ошибка при изменении статуса токена:', error.message);
+    console.error('Remove token error:', error.message);
   }
 }
 
 async function showAllTokens(multiZap) {
   try {
     const tokens = await multiZap.getAllTokens();
-    console.log(`\nВсего токенов: ${tokens.length}`);
-    
+    console.log(`\nTotal tokens: ${tokens.length}`);
+
     for (let i = 0; i < tokens.length; i++) {
       const tokenInfo = await multiZap.getTokenInfo(tokens[i]);
-      console.log(`${i + 1}. Токен: ${tokens[i]}`);
-      console.log(`   LP токен: ${tokenInfo.lpToken}`);
-      console.log(`   Статус: ${tokenInfo.isActive ? 'Активен' : 'Неактивен'}`);
+      console.log(`${i + 1}. Token: ${tokens[i]}`);
+      console.log(`   LP token: ${tokenInfo.lpToken}`);
+      console.log(`   Status: ${tokenInfo.isActive ? 'Active' : 'Inactive'}`);
       console.log('');
     }
   } catch (error) {
-    console.error('Ошибка при получении списка токенов:', error.message);
+    console.error('Show tokens error:', error.message);
   }
 }
 
 async function showTokenInfo(multiZap) {
   try {
-    const token = await prompt('Адрес токена: ');
+    const token = await prompt('Token address: ');
 
     if (!token) {
-      console.error('Ошибка: адрес токена обязателен');
+      console.error('Error: token address is required');
       return;
     }
 
     const tokenInfo = await multiZap.getTokenInfo(token);
-    
     if (tokenInfo.token === ethers.ZeroAddress) {
-      console.log('Токен не найден');
+      console.log('Token not found');
       return;
     }
 
-    console.log(`\nИнформация о токене ${token}:`);
-    console.log(`LP токен: ${tokenInfo.lpToken}`);
-    console.log(`Статус: ${tokenInfo.isActive ? 'Активен' : 'Неактивен'}`);
+    console.log(`\nToken info for ${token}:`);
+    console.log(`LP token: ${tokenInfo.lpToken}`);
+    console.log(`Status: ${tokenInfo.isActive ? 'Active' : 'Inactive'}`);
   } catch (error) {
-    console.error('Ошибка при получении информации о токене:', error.message);
+    console.error('Show token info error:', error.message);
   }
 }
 
 async function showBalances(multiZap) {
   try {
     const tokens = await multiZap.getAllTokens();
-    console.log('\nБалансы:');
-    
+    console.log('\nBalances:');
+
     for (const token of tokens) {
-      const tokenInfo = await multiZap.getTokenInfo(token);
       const lpBalance = await multiZap.getLpBalance(token);
       const tokenBalance = await multiZap.getTokenBalance(token);
-      
-      console.log(`\nТокен: ${token}`);
-      console.log(`  LP баланс: ${ethers.formatEther(lpBalance)} LP`);
-      console.log(`  Токен баланс: ${ethers.formatEther(tokenBalance)} токенов`);
+
+      console.log(`\nToken: ${token}`);
+      console.log(`  LP balance: ${ethers.formatEther(lpBalance)} LP`);
+      console.log(`  Token balance: ${ethers.formatEther(tokenBalance)}`);
     }
-    
+
     const ethBalance = await multiZap.runner.provider.getBalance(await multiZap.getAddress());
-    console.log(`\nETH баланс контракта: ${ethers.formatEther(ethBalance)} ETH`);
+    console.log(`\nContract ETH balance: ${ethers.formatEther(ethBalance)} ETH`);
   } catch (error) {
-    console.error('Ошибка при получении балансов:', error.message);
+    console.error('Show balances error:', error.message);
   }
 }
 
-main().catch((e) => {
-  console.error(e);
+main().catch((error) => {
+  console.error(error);
   process.exit(1);
 });
-
-
