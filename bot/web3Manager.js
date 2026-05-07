@@ -178,6 +178,24 @@ class Web3Manager {
       console.log('  Factory:', factoryAddr);
       console.log('  WETH:', wethAddr);
 
+      const deployGasCost = deployOptions.maxFeePerGas
+        ? deployOptions.gasLimit * deployOptions.maxFeePerGas
+        : deployOptions.gasPrice
+          ? deployOptions.gasLimit * deployOptions.gasPrice
+          : null;
+
+      if (deployGasCost) {
+        const balance = await this.provider.getBalance(this.wallet.address);
+        if (balance < deployGasCost) {
+          throw new Error(
+            `Недостаточно средств для деплоя. ` +
+            `Баланс: ${ethers.formatEther(balance)} ${this.networkConfig.nativeCurrency}, ` +
+            `требуется примерно: ${ethers.formatEther(deployGasCost)} ${this.networkConfig.nativeCurrency} ` +
+            `(gasLimit ${deployOptions.gasLimit.toString()}).`
+          );
+        }
+      }
+
       const MultiZapFactory = new ethers.ContractFactory(this.abi, this.bytecode, this.wallet);
       const multiZap = await MultiZapFactory.deploy(
         routerAddr,
@@ -191,8 +209,16 @@ class Web3Manager {
       this.multiZapContract = multiZap;
       return address;
     } catch (error) {
-      console.error('Детали ошибки развертывания:', error);
-      throw new Error(`Ошибка развертывания контракта: ${error.message}`);
+      console.error('Детали ошибки развертывания:', {
+        message: error.message,
+        reason: error.reason,
+        shortMessage: error.shortMessage,
+        code: error.code,
+        rpcMessage: error.info?.error?.message
+      });
+
+      const message = error.shortMessage || error.info?.error?.message || error.reason || error.message || 'Неизвестная ошибка';
+      throw new Error(`Ошибка развертывания контракта: ${message}`);
     }
   }
 

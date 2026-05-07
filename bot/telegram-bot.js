@@ -123,6 +123,18 @@ class TelegramBotManager {
     return message.substring(0, maxLength - 50) + '\n\n... (сообщение обрезано)';
   }
 
+  getReadableErrorMessage(error) {
+    const rawMessage = error.shortMessage ||
+      error.info?.error?.message ||
+      error.reason ||
+      error.message ||
+      'Unknown error';
+
+    return String(rawMessage)
+      .replace(/transaction="0x[a-fA-F0-9]+"/g, 'transaction="<hidden>"')
+      .replace(/0x[a-fA-F0-9]{200,}/g, '<hidden bytecode>');
+  }
+
   // Показать позицию токена (используется после покупки и при выборе токена)
   async showTokenPosition(chatId, tokenAddress, messageId = null) {
     const user = this.userManager.getUser(chatId);
@@ -505,7 +517,7 @@ class TelegramBotManager {
           { parse_mode: 'Markdown' }
         );
       } catch (error) {
-        this.bot.sendMessage(chatId, `Deployment error: ${error.message}`);
+        this.bot.sendMessage(chatId, this.truncateMessage(`Deployment error: ${this.getReadableErrorMessage(error)}`));
       }
     });
 
