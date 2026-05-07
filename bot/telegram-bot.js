@@ -20,6 +20,8 @@ class TelegramBotManager {
     // Хранилище для маппинга коротких ID токенов (чтобы не класть полные адреса в callback_data)
     // Формат: { [chatId]: { [shortId]: tokenAddress } }
     this.tokenAddressMap = {};
+    this.pendingActions = new Set();
+    this.pendingInputActions = new Map();
     this.setupCommands();
     this.setupCallbackHandlers();
     // Запускаем мониторинг лимитных ордеров
@@ -68,6 +70,40 @@ class TelegramBotManager {
     const networkConfig = config.getNetworkConfig(networkName);
     return networkConfig.nativeCurrency === 'BNB' ? 'WBNB' : 'WETH';
   }
+
+  getPendingActionKey(chatId, action, tokenAddress) {
+    return `${chatId}:${action}:${tokenAddress.toLowerCase()}`;
+  }
+
+  setPendingInput(chatId, action) {
+    this.pendingInputActions.set(String(chatId), action);
+  }
+
+  clearPendingInput(chatId, action = null) {
+    const key = String(chatId);
+    if (!action || this.pendingInputActions.get(key) === action) {
+      this.pendingInputActions.delete(key);
+    }
+  }
+
+  hasPendingInput(chatId) {
+    return this.pendingInputActions.has(String(chatId));
+  }
+
+  async runTokenAction(chatId, action, tokenAddress, fn) {
+    const key = this.getPendingActionKey(chatId, action, tokenAddress);
+    if (this.pendingActions.has(key)) {
+      throw new Error(`${action} is already pending for this token. Wait for the current transaction to finish.`);
+    }
+
+    this.pendingActions.add(key);
+    try {
+      return await fn();
+    } finally {
+      this.pendingActions.delete(key);
+    }
+  }
+
   async autoAddAndZapIn(chatId, web3Manager, tokenAddress, amount) {
     const tokenInfo = await web3Manager.getTokenInfo(tokenAddress);
     if (tokenInfo?.token && tokenInfo.token !== ethers.ZeroAddress && !tokenInfo.isActive) {
@@ -132,7 +168,10 @@ class TelegramBotManager {
     }
     
     const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
-    const status = tokenInfo.isActive ? '✅ Активен' : '❌ Неактивен';
+    const isStoredToken = tokenInfo?.token && tokenInfo.token !== ethers.ZeroAddress;
+    const status = isStoredToken
+      ? (tokenInfo.isActive ? '✅ Активен' : '❌ Неактивен')
+      : '⏳ Будет добавлен при покупке';
     const lpBalanceNum = parseFloat(lpBalance);
     const hasLpBalance = lpBalanceNum > 0;
     
@@ -158,7 +197,7 @@ class TelegramBotManager {
       `📈 ${nativeCurrency} цена: $${(tokenPrice.nativePrice || tokenPrice.ethPrice || 0).toFixed(2)}\n`;
     
     // Добавляем предупреждение если нет LP баланса
-    if (!hasLpBalance) {
+    if (!hasLpBalance && isStoredToken) {
       message += `\n⚠️ **Нет LP токенов для продажи**\n` +
         `💡 Сначала купите токены через zap-in, чтобы создать LP позицию.`;
     }
@@ -193,10 +232,10 @@ class TelegramBotManager {
           { text: '💰 Другая сумма', callback_data: `custom_amount_${tokenAddress}` }
         ],
         [
-          { text: '💸 Продать', callback_data: `sell_all_${tokenAddress}` }
+          { text: '💸 Продать все', callback_data: `sell_all_${tokenAddress}` }
         ],
         [
-          { text: '🗑️ Удалить токен', callback_data: `remove_token_${tokenAddress}` }
+          { text: '🗑️ Убрать из списка', callback_data: `remove_token_${tokenAddress}` }
         ],
         [
           { text: '📊 Обновить', callback_data: `select_token_${tokenAddress}` },
@@ -233,7 +272,6 @@ class TelegramBotManager {
       { command: 'menu', description: '📋 Меню команд' },
       { command: 'register', description: '🔐 Регистрация (добавить ключ)' },
       { command: 'deploy', description: '🚀 Развернуть контракт' },
-      { command: 'addtoken', description: '🪙 Добавить токен' },
       { command: 'removetoken', description: '🗑️ Удалить токен' },
       { command: 'tokens', description: '📝 Список токенов' },
       { command: 'positions', description: '📊 Мои позиции' },
@@ -278,7 +316,7 @@ class TelegramBotManager {
 /deploy - Развернуть MultiZap контракт
 
 **Управление токенами:**
-/addtoken - Добавить новый токен
+Отправьте адрес токена, чтобы открыть карточку покупки/продажи
 /removetoken - Удалить токен
 /tokens - Список поддерживаемых токенов
 /positions - Просмотр позиций
@@ -324,7 +362,7 @@ class TelegramBotManager {
             { text: 'Deploy Contract', callback_data: 'home_deploy' }
           ],
           [
-            { text: 'Add Token', callback_data: 'home_addtoken' },
+            { text: 'Open Token', callback_data: 'home_open_token' },
             { text: 'Positions', callback_data: 'home_positions' }
           ],
           [
@@ -346,6 +384,56 @@ class TelegramBotManager {
         parse_mode: 'Markdown',
         reply_markup: homeKeyboard
       });
+    });
+
+    this.bot.onText(/^\/menu(?:@\w+)?$/, (msg) => {
+      const chatId = msg.chat.id;
+      this.bot.sendMessage(chatId,
+        'Menu:\n\n' +
+        '/home - main menu\n' +
+        '/positions - token positions\n' +
+        '/position - token positions\n' +
+        '/balance - wallet and contract balances\n' +
+        '/tokens - token list\n' +
+        '/exit - sell all LP for a token\n' +
+        '/network - switch network\n\n' +
+        'You can also send a token address directly to open buy/sell actions.'
+      );
+    });
+
+    this.bot.onText(/^\/positions?(?:@\w+)?$/, async (msg) => {
+      await this.handlePositions(msg.chat.id);
+    });
+
+    this.bot.onText(/^\/balance(?:@\w+)?$/, async (msg) => {
+      await this.handleBalance(msg.chat.id);
+    });
+
+    this.bot.onText(/^\/tokens(?:@\w+)?$/, async (msg) => {
+      await this.handleTokens(msg.chat.id);
+    });
+
+    this.bot.onText(/^\/exit(?:@\w+)?$/, (msg) => {
+      const chatId = msg.chat.id;
+      this.bot.sendMessage(chatId, 'Send token address to sell all LP for that token:');
+      this.handleExit(chatId);
+    });
+
+    this.bot.onText(/^\/help(?:@\w+)?$/, (msg) => {
+      this.bot.sendMessage(msg.chat.id, 'Main flow: /register -> /deploy -> send token address -> buy -> sell all. Use /home for buttons.');
+    });
+
+    this.bot.onText(/^\/status(?:@\w+)?$/, (msg) => {
+      const chatId = msg.chat.id;
+      const user = this.userManager.getUser(chatId);
+      const network = user ? this.userManager.getUserNetwork(chatId) : config.DEFAULT_NETWORK;
+      const contractAddress = user ? this.userManager.getUserContract(chatId, network) : null;
+      this.bot.sendMessage(chatId,
+        `Status:\n\n` +
+        `Network: ${network}\n` +
+        `Registered: ${user ? 'yes' : 'no'}\n` +
+        `Contract: ${contractAddress ? contractAddress : 'not deployed'}`
+      );
     });
 
     this.bot.onText(/\/register/, (msg) => {
@@ -412,18 +500,13 @@ class TelegramBotManager {
           `Contract deployed successfully.\n\n` +
           `Contract address: \`${contractAddress}\`\n` +
           `Network: ${userNetwork}\n` +
-          `?? Explorer: ${explorerUrl}/address/${contractAddress}\n\n` +
-          `You can now add tokens with /addtoken`,
+          `Explorer: ${explorerUrl}/address/${contractAddress}\n\n` +
+          `Now send a token address to open buy/sell actions.`,
           { parse_mode: 'Markdown' }
         );
       } catch (error) {
         this.bot.sendMessage(chatId, `Deployment error: ${error.message}`);
       }
-    });
-
-    this.bot.onText(/\/addtoken/, (msg) => {
-      const chatId = msg.chat.id;
-      this.handleAddToken(chatId);
     });
 
     this.bot.onText(/\/removetoken/, (msg) => {
@@ -451,169 +534,38 @@ class TelegramBotManager {
       this.handleZapIn(chatId);
     });
 
-  }
+    this.bot.on('message', async (msg) => {
+      const chatId = msg.chat.id;
+      const text = (msg.text || '').trim();
 
-  handleAddToken(chatId) {
-    const user = this.userManager.getUser(chatId);
-    const userContract = user ? this.userManager.getUserContract(chatId) : null;
-    if (!user || !userContract) {
-      this.bot.sendMessage(chatId, 'Deploy the contract first with /deploy');
-      return;
-    }
-
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: 'WETH/WBNB Pair', callback_data: `addtoken_wbnb_${chatId}` }
-        ],
-        [
-          { text: 'Cancel', callback_data: 'cancel' }
-        ]
-      ]
-    };
-
-    this.bot.sendMessage(chatId, 'Choose the base pair for the token:', {
-      reply_markup: keyboard
-    });
-  }
-
-  handleAddTokenWithType(chatId) {
-    const user = this.userManager.getUser(chatId);
-    const userContract = user ? this.userManager.getUserContract(chatId) : null;
-    if (!user || !userContract) {
-      this.bot.sendMessage(chatId, 'Deploy the contract first with /deploy');
-      return;
-    }
-
-    const pairType = 'WETH/WBNB';
-    this.bot.sendMessage(chatId, `Adding token with ${pairType} pair\n\nEnter token address:`);
-
-    this.bot.once('message', async (msg) => {
-      if (msg.chat.id !== chatId) return;
-      
-      try {
-        const tokenAddress = msg.text.trim();
-        
-        if (!tokenAddress || !tokenAddress.startsWith('0x') || tokenAddress.length !== 42) {
-          this.bot.sendMessage(chatId, 'Invalid token address format. Try again with /addtoken');
-          return;
-        }
-
-        const currentUser = this.userManager.getUser(chatId);
-        const userContract = currentUser ? this.userManager.getUserContract(chatId) : null;
-        if (!currentUser || !userContract) {
-          this.bot.sendMessage(chatId, 'Deploy the contract first with /deploy');
-          return;
-        }
-
-        const web3Manager = this.getWeb3ManagerForUser(chatId);
-        web3Manager.setPrivateKey(currentUser.privateKey);
-        web3Manager.setContractAddress(userContract);
-        
-        this.bot.sendMessage(chatId, 'Searching WETH/WBNB LP token...');
-        const txHash = await web3Manager.addTokenAuto(tokenAddress);
-        
-        const explorerUrl = this.getExplorerUrl(chatId);
-        this.bot.sendMessage(chatId, 
-          `Token added successfully.\n\n` +
-          `Token: \`${tokenAddress}\`\n` +
-          `Pair type: ${pairType}\n` +
-          `Transaction: ${explorerUrl}/tx/${txHash}\n\n` +
-          `Opening your positions...`,
-          { parse_mode: 'Markdown' }
-        );
-
-        setTimeout(async () => {
-          try {
-            const tokens = await web3Manager.getAllTokens();
-            if (tokens.length === 0) {
-              this.bot.sendMessage(chatId, 'Positions list is empty.');
-              return;
-            }
-
-            const activeTokens = [];
-            const tokenInfoMap = {};
-            const routerContract = new ethers.Contract(
-              web3Manager.networkConfig.routerAddress,
-              ['function WETH() external pure returns (address)'],
-              web3Manager.provider
-            );
-            const wethAddress = await routerContract.WETH().catch(() => null);
-            const batchSize = 5;
-            const delayBetweenBatches = 2000;
-            const delayBetweenRequests = 300;
-
-            for (let i = 0; i < tokens.length; i++) {
-              try {
-                if (i > 0 && i % batchSize === 0) {
-                  await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
-                } else if (i > 0) {
-                  await new Promise(resolve => setTimeout(resolve, delayBetweenRequests));
-                }
-
-                const tokenInfo = await web3Manager.getTokenInfo(tokens[i]);
-                tokenInfoMap[tokens[i]] = tokenInfo;
-                if (tokenInfo.isActive) {
-                  activeTokens.push(tokens[i]);
-                }
-              } catch (error) {
-                const isRateLimit = error.message?.includes('rate limit') ||
-                  error.message?.includes('missing revert data') ||
-                  error.code === 'CALL_EXCEPTION';
-                if (!isRateLimit) {
-                  console.warn(`Failed to fetch token info for ${tokens[i]}:`, error.message);
-                }
-              }
-            }
-
-            if (activeTokens.length === 0) {
-              this.bot.sendMessage(chatId, 'No active positions.');
-              return;
-            }
-
-            let message = 'Your positions:\n\n';
-            const keyboard = [];
-
-            for (let i = 0; i < activeTokens.length; i++) {
-              const tokenAddress = activeTokens[i];
-              const tokenInfo = tokenInfoMap[tokenAddress];
-              const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
-              const pairType = 'WETH/WBNB';
-
-              message += `${i + 1}. ? \`${shortAddress}\` (${pairType})\n`;
-              keyboard.push([{
-                text: `${i + 1}. ${shortAddress} ? (${pairType})`,
-                callback_data: `select_token_${tokenAddress}`
-              }]);
-            }
-
-            keyboard.push([{
-              text: 'Remove token',
-              callback_data: 'remove_token_menu'
-            }]);
-
-            this.bot.sendMessage(chatId, message + '\nChoose a token for actions:', {
-              parse_mode: 'Markdown',
-              reply_markup: { inline_keyboard: keyboard }
-            });
-          } catch (error) {
-            this.bot.sendMessage(chatId, `Positions error: ${error.message}`);
-          }
-        }, 2000);
-      } catch (error) {
-        this.bot.sendMessage(chatId, `Add token error: ${error.message}`);
+      if (!text || text.startsWith('/') || !ethers.isAddress(text)) {
+        return;
       }
+
+      if (this.hasPendingInput(chatId)) {
+        return;
+      }
+
+      const user = this.userManager.getUser(chatId);
+      const userContract = user ? this.userManager.getUserContract(chatId) : null;
+      if (!user || !userContract) {
+        this.bot.sendMessage(chatId, 'Deploy the contract first with /deploy');
+        return;
+      }
+
+      await this.showTokenPosition(chatId, text);
     });
+
   }
   handleRemoveToken(chatId) {
     const user = this.userManager.getUser(chatId);
-    const userContract = user ? this.userManager.getUserContract(chatId) : null;
-    if (!user || !userContract) {
-      this.bot.sendMessage(chatId, '❌ Сначала разверните контракт командой /deploy');
+    if (!user) {
+      this.bot.sendMessage(chatId, '❌ Сначала зарегистрируйтесь командой /register');
       return;
     }
 
-    this.bot.sendMessage(chatId, '🗑️ Введите адрес токена для удаления:');
+    this.bot.sendMessage(chatId, '🗑️ Введите адрес токена, который нужно убрать из списков бота:');
+    this.setPendingInput(chatId, 'remove_token');
 
     this.bot.once('message', async (msg) => {
       if (msg.chat.id !== chatId) return;
@@ -621,38 +573,16 @@ class TelegramBotManager {
       try {
         const tokenAddress = msg.text.trim();
         
-        if (!tokenAddress || !tokenAddress.startsWith('0x') || tokenAddress.length !== 42) {
+        if (!ethers.isAddress(tokenAddress)) {
           this.bot.sendMessage(chatId, '❌ Неверный формат адреса токена. Попробуйте еще раз с /removetoken');
           return;
         }
 
-        // Повторная проверка пользователя
-        const currentUser = this.userManager.getUser(chatId);
-        const userContract = currentUser ? this.userManager.getUserContract(chatId) : null;
-        if (!currentUser || !userContract) {
-          this.bot.sendMessage(chatId, '❌ Сначала разверните контракт командой /deploy');
-          return;
-        }
-
-        const web3Manager = this.getWeb3ManagerForUser(chatId);
-        web3Manager.setPrivateKey(currentUser.privateKey);
-        web3Manager.setContractAddress(userContract);
-        
-        // Проверяем, существует ли токен
-        const tokenInfo = await web3Manager.getTokenInfo(tokenAddress);
-        if (!tokenInfo || tokenInfo.token === '0x0000000000000000000000000000000000000000') {
-          this.bot.sendMessage(chatId, '❌ Токен не найден в контракте.');
-          return;
-        }
-
-        this.bot.sendMessage(chatId, '⏳ Удаляю токен...');
-        const txHash = await web3Manager.removeToken(tokenAddress);
-        
-        const explorerUrl = this.getExplorerUrl(chatId);
+        this.userManager.hideToken(chatId, tokenAddress);
         this.bot.sendMessage(chatId, 
-          `✅ Токен успешно удален!\n\n` +
+          `✅ Токен убран из списков бота.\n\n` +
           `📍 Токен: \`${tokenAddress}\`\n` +
-          `🔗 Транзакция: ${explorerUrl}/tx/${txHash}`,
+          `Контракт не менялся, транзакция не отправлялась.`,
           { parse_mode: 'Markdown' }
         );
       } catch (error) {
@@ -661,6 +591,8 @@ class TelegramBotManager {
           errorMessage = errorMessage.substring(0, 4000) + '...';
         }
         this.bot.sendMessage(chatId, `❌ Ошибка удаления токена: ${errorMessage}`);
+      } finally {
+        this.clearPendingInput(chatId, 'remove_token');
       }
     });
   }
@@ -678,10 +610,12 @@ class TelegramBotManager {
       web3Manager.setPrivateKey(user.privateKey);
       web3Manager.setContractAddress(userContract);
       
-      const tokens = await this.web3Manager.getAllTokens();
+      const allTokens = await this.web3Manager.getAllTokens();
+      const hiddenTokens = new Set(this.userManager.getHiddenTokens(chatId).map(address => address.toLowerCase()));
+      const tokens = allTokens.filter(address => !hiddenTokens.has(address.toLowerCase()));
       
       if (tokens.length === 0) {
-        this.bot.sendMessage(chatId, '📝 Список позиций пуст. Добавьте токены командой /addtoken');
+        this.bot.sendMessage(chatId, '📝 Список позиций пуст. Отправьте адрес токена и нажмите Buy.');
         return;
       }
 
@@ -723,7 +657,7 @@ class TelegramBotManager {
       }
 
       if (activeTokens.length === 0) {
-        this.bot.sendMessage(chatId, '📝 Нет активных позиций. Добавьте токены командой /addtoken');
+        this.bot.sendMessage(chatId, '📝 Нет активных позиций. Отправьте адрес токена и нажмите Buy.');
         return;
       }
 
@@ -743,9 +677,8 @@ class TelegramBotManager {
         }]);
       }
 
-      // Добавляем кнопку для просмотра всех токенов (включая неактивные)
       keyboard.push([{
-        text: '🗑️ Удалить токен',
+        text: '🗑️ Убрать токен из списка',
         callback_data: 'remove_token_menu'
       }]);
 
@@ -763,6 +696,7 @@ class TelegramBotManager {
   }
 
   handleZapIn(chatId) {
+    this.setPendingInput(chatId, 'zapin');
     this.bot.once('message', async (msg) => {
       try {
         const [tokenAddress, amountStr] = msg.text.split(',').map(item => item.trim());
@@ -785,6 +719,7 @@ class TelegramBotManager {
         web3Manager.setContractAddress(userContract);
         
         const buyResult = await this.autoAddAndZapIn(chatId, web3Manager, tokenAddress, amount);
+        this.userManager.unhideToken(chatId, tokenAddress);
         
         const explorerUrl = this.getExplorerUrl(chatId);
         const autoAddText = buyResult.added
@@ -806,11 +741,14 @@ class TelegramBotManager {
           errorMessage = errorMessage.substring(0, 4000) + '...';
         }
         this.bot.sendMessage(chatId, `❌ Ошибка zap-in:\n\n${errorMessage}`);
+      } finally {
+        this.clearPendingInput(chatId, 'zapin');
       }
     });
   }
 
   handleExit(chatId) {
+    this.setPendingInput(chatId, 'exit');
     this.bot.once('message', async (msg) => {
       try {
         const tokenAddress = msg.text.trim();
@@ -850,7 +788,9 @@ class TelegramBotManager {
           console.warn('Не удалось получить LP баланс перед продажей:', e.message);
         }
         
-        const txHash = await web3Manager.exitAndSell(tokenAddress);
+        const txHash = await this.runTokenAction(chatId, 'sell', tokenAddress, () =>
+          web3Manager.exitAndSell(tokenAddress)
+        );
         
         const explorerUrl = this.getExplorerUrl(chatId);
         const networkConfig = config.getNetworkConfig(this.userManager.getUserNetwork(chatId));
@@ -885,6 +825,8 @@ class TelegramBotManager {
         }
         
         this.bot.sendMessage(chatId, errorMessage, { parse_mode: 'Markdown' });
+      } finally {
+        this.clearPendingInput(chatId, 'exit');
       }
     });
   }
@@ -933,10 +875,12 @@ class TelegramBotManager {
       web3Manager.setPrivateKey(user.privateKey);
       web3Manager.setContractAddress(userContract);
       
-      const tokens = await this.web3Manager.getAllTokens();
+      const allTokens = await this.web3Manager.getAllTokens();
+      const hiddenTokens = new Set(this.userManager.getHiddenTokens(chatId).map(address => address.toLowerCase()));
+      const tokens = allTokens.filter(address => !hiddenTokens.has(address.toLowerCase()));
       
       if (tokens.length === 0) {
-        this.bot.sendMessage(chatId, '📝 Список токенов пуст. Добавьте токены командой /addtoken');
+        this.bot.sendMessage(chatId, '📝 Список токенов пуст. Отправьте адрес токена и нажмите Buy.');
         return;
       }
 
@@ -988,16 +932,15 @@ class TelegramBotManager {
           await this.bot.sendMessage(chatId, 'Use /register and send your private key.');
         } else if (data === 'home_deploy') {
           await this.bot.sendMessage(chatId, 'Use /deploy to deploy the contract on the selected network.');
-        } else if (data === 'home_addtoken') {
-          this.handleAddToken(chatId);
+        } else if (data === 'home_open_token') {
+          await this.bot.sendMessage(chatId, 'Send a token address to open buy/sell actions.');
         } else if (data === 'home_positions') {
           await this.handlePositions(chatId);
         } else if (data === 'home_zapin') {
           await this.bot.sendMessage(chatId, 'Use /zapin and send `token_address,amount_ETH`.', { parse_mode: 'Markdown' });
           this.handleZapIn(chatId);
         } else if (data === 'home_exit') {
-          await this.bot.sendMessage(chatId, 'Use /exit and send the token address.', { parse_mode: 'Markdown' });
-          this.handleExit(chatId);
+          await this.handlePositions(chatId);
         } else if (data === 'home_balance') {
           await this.handleBalance(chatId);
         } else if (data === 'home_tokens') {
@@ -1010,24 +953,21 @@ class TelegramBotManager {
           const networkName = data.replace('switch_network_', '');
           this.userManager.setUserNetwork(chatId, networkName);
           await this.bot.sendMessage(chatId, `Network switched to ${networkName}.`);
-        } else if (data.startsWith('addtoken_wbnb_')) {
-          this.handleAddTokenWithType(chatId);
         } else if (data === 'remove_token_menu') {
           this.handleRemoveToken(chatId);
         } else if (data.startsWith('remove_token_')) {
           const tokenAddress = data.replace('remove_token_', '');
           const user = this.userManager.getUser(chatId);
-          const userContract = user ? this.userManager.getUserContract(chatId) : null;
-          if (!user || !userContract) {
-            throw new Error('Deploy the contract first with /deploy');
+          if (!user) {
+            throw new Error('Register first with /register');
           }
 
-          const web3Manager = this.getWeb3ManagerForUser(chatId);
-          web3Manager.setPrivateKey(user.privateKey);
-          web3Manager.setContractAddress(userContract);
-          const txHash = await web3Manager.removeToken(tokenAddress);
-          const explorerUrl = this.getExplorerUrl(chatId);
-          await this.bot.sendMessage(chatId, `Token removed.\n\nToken: \`${tokenAddress}\`\nTransaction: ${explorerUrl}/tx/${txHash}`, { parse_mode: 'Markdown' });
+          this.userManager.hideToken(chatId, tokenAddress);
+          await this.bot.sendMessage(
+            chatId,
+            `Token hidden from bot lists.\n\nToken: \`${tokenAddress}\`\nNo contract transaction was sent.`,
+            { parse_mode: 'Markdown' }
+          );
         } else if (data.startsWith('select_token_')) {
           const tokenAddress = data.replace('select_token_', '');
           await this.showTokenPosition(chatId, tokenAddress, messageId);
@@ -1048,7 +988,10 @@ class TelegramBotManager {
           const web3Manager = this.getWeb3ManagerForUser(chatId);
           web3Manager.setPrivateKey(user.privateKey);
           web3Manager.setContractAddress(userContract);
-          const buyResult = await this.autoAddAndZapIn(chatId, web3Manager, tokenAddress, amount);
+          const buyResult = await this.runTokenAction(chatId, 'buy', tokenAddress, () =>
+            this.autoAddAndZapIn(chatId, web3Manager, tokenAddress, amount)
+          );
+          this.userManager.unhideToken(chatId, tokenAddress);
           const explorerUrl = this.getExplorerUrl(chatId);
           const networkConfig = config.getNetworkConfig(this.userManager.getUserNetwork(chatId));
           const autoAddText = buyResult.added ? `Auto-add: ${buyResult.pairType} pair was registered.\n` : '';
@@ -1057,6 +1000,7 @@ class TelegramBotManager {
         } else if (data.startsWith('custom_amount_')) {
           const tokenAddress = data.replace('custom_amount_', '');
           await this.bot.sendMessage(chatId, 'Send buy amount in ETH, for example: 0.01');
+          this.setPendingInput(chatId, 'custom_amount');
           this.bot.once('message', async (msg) => {
             if (msg.chat.id !== chatId) return;
             try {
@@ -1074,12 +1018,17 @@ class TelegramBotManager {
               const web3Manager = this.getWeb3ManagerForUser(chatId);
               web3Manager.setPrivateKey(user.privateKey);
               web3Manager.setContractAddress(userContract);
-              const buyResult = await this.autoAddAndZapIn(chatId, web3Manager, tokenAddress, amount);
+              const buyResult = await this.runTokenAction(chatId, 'buy', tokenAddress, () =>
+                this.autoAddAndZapIn(chatId, web3Manager, tokenAddress, amount)
+              );
+              this.userManager.unhideToken(chatId, tokenAddress);
               const explorerUrl = this.getExplorerUrl(chatId);
               await this.bot.sendMessage(chatId, `Buy completed.\n\nToken: \`${tokenAddress}\`\nAmount: ${amount}\nTransaction: ${explorerUrl}/tx/${buyResult.txHash}`, { parse_mode: 'Markdown' });
               await this.showTokenPosition(chatId, tokenAddress);
             } catch (error) {
               await this.bot.sendMessage(chatId, `Buy error: ${error.message}`);
+            } finally {
+              this.clearPendingInput(chatId, 'custom_amount');
             }
           });
         } else if (data.startsWith('sell_all_')) {
@@ -1093,7 +1042,9 @@ class TelegramBotManager {
           const web3Manager = this.getWeb3ManagerForUser(chatId);
           web3Manager.setPrivateKey(user.privateKey);
           web3Manager.setContractAddress(userContract);
-          const txHash = await web3Manager.exitAndSell(tokenAddress);
+          const txHash = await this.runTokenAction(chatId, 'sell', tokenAddress, () =>
+            web3Manager.exitAndSell(tokenAddress)
+          );
           const explorerUrl = this.getExplorerUrl(chatId);
           await this.bot.sendMessage(chatId, `Sell completed.\n\nToken: \`${tokenAddress}\`\nTransaction: ${explorerUrl}/tx/${txHash}`, { parse_mode: 'Markdown' });
         }

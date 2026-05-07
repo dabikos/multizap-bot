@@ -244,47 +244,6 @@ class Web3Manager {
     return overrides;
   }
 
-  async addTokenAuto(tokenAddress) {
-    if (!this.multiZapContract) {
-      throw new Error('Contract is not connected');
-    }
-
-    if (!ethers.isAddress(tokenAddress)) {
-      throw new Error('Invalid token address');
-    }
-
-    try {
-      const factoryContract = new ethers.Contract(
-        this.networkConfig.factoryAddress,
-        ['function getPair(address, address) view returns (address)'],
-        this.provider
-      );
-
-      const wethAddress = await this.getWethAddress();
-      const lpPair = await factoryContract.getPair(tokenAddress, wethAddress);
-
-      if (lpPair === ethers.ZeroAddress) {
-        throw new Error(`LP_PAIR_NOT_FOUND: No WETH/WBNB LP pair found for token ${tokenAddress} (${wethAddress}).`);
-      }
-    } catch (error) {
-      if (error.message.includes('LP_PAIR_NOT_FOUND')) {
-        throw error;
-      }
-      console.warn('Warning: failed to pre-check LP pair:', error.message);
-    }
-
-    try {
-      const txOverrides = await this.buildTxOverrides(
-        (overrides) => this.multiZapContract.addTokenAuto.estimateGas(tokenAddress, overrides),
-        180000n
-      );
-      const tx = await this.multiZapContract.addTokenAuto(tokenAddress, txOverrides);
-      await tx.wait(1);
-      return tx.hash;
-    } catch (error) {
-      throw new Error(`Auto-add token error: ${error.message}`);
-    }
-  }
   async removeToken(tokenAddress) {
     if (!this.multiZapContract) {
       throw new Error('Контракт не подключен');
@@ -330,7 +289,7 @@ class Web3Manager {
 
     if (tokenInfo) {
       if (tokenInfo.token === ethers.ZeroAddress) {
-        throw new Error('TOKEN_NOT_SUPPORTED: Токен не добавлен в контракт. Сначала добавьте токен через /addtoken');
+        throw new Error('TOKEN_NOT_SUPPORTED: token is not registered yet. Use the one-click buy flow.');
       }
       if (!tokenInfo.isActive) {
         throw new Error('TOKEN_INACTIVE: Токен неактивен. Обратитесь к администратору.');
@@ -480,7 +439,7 @@ class Web3Manager {
 
       // Парсим ошибки из контракта
       if (errorMessage.includes('TOKEN_NOT_SUPPORTED') || errorMessage.includes('token not supported')) {
-        errorMessage = 'Токен не добавлен в контракт. Сначала добавьте токен через /addtoken';
+        errorMessage = 'Токен еще не зарегистрирован. Для покупки используйте кнопку Buy, она добавит токен автоматически.';
       } else if (errorMessage.includes('TOKEN_INACTIVE') || errorMessage.includes('token inactive')) {
         errorMessage = 'Токен неактивен. Обратитесь к администратору.';
       } else if (errorMessage.includes('NO_BNB') || errorMessage.includes('NO_ETH') || errorMessage.includes('no bnb') || errorMessage.includes('no eth')) {
@@ -596,7 +555,7 @@ class Web3Manager {
     }
 
     if (!tokenInfo || tokenInfo.token === ethers.ZeroAddress) {
-      throw new Error('Token not found in contract. Add it first with /addtoken');
+      throw new Error('Token not found in contract. Buy it first, then sell.');
     }
 
     if (!tokenInfo.isActive) {

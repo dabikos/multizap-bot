@@ -38,29 +38,25 @@ async function main() {
 
   while (true) {
     console.log('\n=== MultiZap token management ===');
-    console.log('1. Add token');
-    console.log('2. Remove token');
-    console.log('3. Show all tokens');
-    console.log('4. Show token info');
-    console.log('5. Show balances');
+    console.log('1. Remove token');
+    console.log('2. Show all tokens');
+    console.log('3. Show token info');
+    console.log('4. Show balances');
     console.log('0. Exit');
 
-    const choice = await prompt('Choose action (0-5): ');
+    const choice = await prompt('Choose action (0-4): ');
 
     switch (choice) {
       case '1':
-        await addTokenAuto(multiZap);
-        break;
-      case '2':
         await removeToken(multiZap);
         break;
-      case '3':
+      case '2':
         await showAllTokens(multiZap);
         break;
-      case '4':
+      case '3':
         await showTokenInfo(multiZap);
         break;
-      case '5':
+      case '4':
         await showBalances(multiZap);
         break;
       case '0':
@@ -69,24 +65,6 @@ async function main() {
       default:
         console.log('Invalid choice');
     }
-  }
-}
-
-async function addTokenAuto(multiZap) {
-  try {
-    const token = await prompt('Token address: ');
-
-    if (!token) {
-      console.error('Error: token address is required');
-      return;
-    }
-
-    const tx = await multiZap.addTokenAuto(token);
-    console.log('Transaction sent:', tx.hash);
-    await tx.wait();
-    console.log('Success: token added');
-  } catch (error) {
-    console.error('Add token error:', error.message);
   }
 }
 

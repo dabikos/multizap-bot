@@ -54,6 +54,7 @@ class UserManager {
         privateKey: privateKey,
         contractAddress: null, // Legacy, для обратной совместимости
         contracts: {}, // { ETH: '0x...', BSC: '0x...', BASE: '0x...' }
+        hiddenTokens: {}, // { ETH: ['0x...'], BSC: ['0x...'], BASE: ['0x...'] }
         currentNetwork: config.DEFAULT_NETWORK, // Текущая выбранная сеть
         createdAt: new Date().toISOString(),
         lastActivity: new Date().toISOString()
@@ -125,6 +126,60 @@ class UserManager {
     return null;
   }
 
+  getHiddenTokens(telegramId, networkName = null) {
+    const user = this.users[telegramId];
+    if (!user) {
+      return [];
+    }
+
+    const network = networkName ? networkName.toUpperCase() : user.currentNetwork || config.DEFAULT_NETWORK;
+    return user.hiddenTokens?.[network] || [];
+  }
+
+  hideToken(telegramId, tokenAddress, networkName = null) {
+    const user = this.users[telegramId];
+    if (!user || !tokenAddress) {
+      return false;
+    }
+
+    const network = networkName ? networkName.toUpperCase() : user.currentNetwork || config.DEFAULT_NETWORK;
+    const normalizedAddress = tokenAddress.toLowerCase();
+
+    if (!user.hiddenTokens) {
+      user.hiddenTokens = {};
+    }
+    if (!user.hiddenTokens[network]) {
+      user.hiddenTokens[network] = [];
+    }
+    if (!user.hiddenTokens[network].includes(normalizedAddress)) {
+      user.hiddenTokens[network].push(normalizedAddress);
+    }
+
+    user.lastActivity = new Date().toISOString();
+    this.saveUsers();
+    return true;
+  }
+
+  unhideToken(telegramId, tokenAddress, networkName = null) {
+    const user = this.users[telegramId];
+    if (!user || !tokenAddress) {
+      return false;
+    }
+
+    const network = networkName ? networkName.toUpperCase() : user.currentNetwork || config.DEFAULT_NETWORK;
+    const normalizedAddress = tokenAddress.toLowerCase();
+    const hiddenTokens = user.hiddenTokens?.[network];
+
+    if (!hiddenTokens) {
+      return true;
+    }
+
+    user.hiddenTokens[network] = hiddenTokens.filter(address => address !== normalizedAddress);
+    user.lastActivity = new Date().toISOString();
+    this.saveUsers();
+    return true;
+  }
+
   updateUserActivity(telegramId) {
     if (this.users[telegramId]) {
       this.users[telegramId].lastActivity = new Date().toISOString();
@@ -167,8 +222,6 @@ class UserManager {
 }
 
 module.exports = UserManager;
-
-
 
 
 

@@ -165,15 +165,6 @@ contract MultiZap is Ownable {
         }
     }
 
-    function addTokenAuto(address _token) external onlyOwner {
-        require(_token != address(0), "INVALID_TOKEN");
-        require(supportedTokens[_token].token == address(0), "TOKEN_ALREADY_EXISTS");
-
-        address lpToken = _findPair(_token);
-        require(lpToken != address(0), "LP_PAIR_NOT_FOUND");
-        _storeSupportedToken(_token, lpToken);
-    }
-
     function removeToken(address _token) external onlyOwner {
         require(supportedTokens[_token].token != address(0), "TOKEN_NOT_FOUND");
         delete supportedTokens[_token];
