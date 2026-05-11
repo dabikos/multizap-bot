@@ -21,7 +21,7 @@ const CONFIG = {
   maxGasPrice: '50', // Максимальная цена газа в gwei
 };
 
-const RPC_URL = 'https://eth-mainnet.g.alchemy.com/v2/x3twrYyq0NHf4x7oZSKKcQl9ehTwS4l9';
+const RPC_URL = process.env.ETH_RPC_URL || process.env.RPC_URL || 'https://eth.llamarpc.com';
 
 // ABI для UniswapV2Pair
 const PAIR_ABI = [

@@ -3,7 +3,7 @@ const { ethers } = require('hardhat');
 const { getPrivateKeyInteractive } = require('./util-session');
 
 async function main() {
-  const rpcUrl = 'https://eth-mainnet.g.alchemy.com/v2/x3twrYyq0NHf4x7oZSKKcQl9ehTwS4l9';
+  const rpcUrl = process.env.ETH_RPC_URL || process.env.RPC_URL || 'https://eth.llamarpc.com';
   const privateKey = await getPrivateKeyInteractive();
   const token = await prompt('Адрес токена: ');
   const lpToken = await prompt('Адрес LP токена: ');
@@ -29,5 +29,4 @@ main().catch((e) => {
   console.error(e);
   process.exit(1);
 });
-
 

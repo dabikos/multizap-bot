@@ -52,7 +52,7 @@ function applySlippage(value, slippagePct, direction) {
 }
 
 async function main() {
-  const rpcUrl = 'https://eth-mainnet.g.alchemy.com/v2/x3twrYyq0NHf4x7oZSKKcQl9ehTwS4l9';
+  const rpcUrl = process.env.ETH_RPC_URL || process.env.RPC_URL || 'https://eth.llamarpc.com';
   const { abi } = getContractInterface();
 
   const privateKey = await getPrivateKeyInteractive();
@@ -92,5 +92,4 @@ main().catch((e) => {
   console.error(e);
   process.exit(1);
 });
-
 

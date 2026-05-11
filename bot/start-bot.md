@@ -22,7 +22,7 @@ npm run bot
 
 ## 📱 Использование бота
 
-1. **Найдите бота в Telegram** по токену: `8434817486:AAEPLlrWRR3EKbSbqan6vPaDWTi8NqmH0YQ`
+1. **Найдите бота в Telegram** по username из @BotFather.
 
 2. **Отправьте /start** для начала работы
 
@@ -70,7 +70,6 @@ npm run bot
 - `bot/telegram-bot.js` - Основной файл бота
 - `bot/web3Manager.js` - Модуль Web3
 - `bot/userManager.js` - Управление пользователями
-
 
 
 

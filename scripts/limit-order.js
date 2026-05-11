@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { getPrivateKeyInteractive } = require('./util-session');
 
-const RPC_URL = 'https://eth-mainnet.g.alchemy.com/v2/x3twrYyq0NHf4x7oZSKKcQl9ehTwS4l9';
+const RPC_URL = process.env.ETH_RPC_URL || process.env.RPC_URL || 'https://eth.llamarpc.com';
 
 function prompt(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -192,7 +192,6 @@ main().catch((error) => {
   console.error('💥 Критическая ошибка:', error);
   process.exit(1);
 });
-
 
 
 

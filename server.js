@@ -16,7 +16,7 @@ const io = socketIo(server, {
 });
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
-const RPC_URL = 'https://eth-mainnet.g.alchemy.com/v2/x3twrYyq0NHf4x7oZSKKcQl9ehTwS4l9';
+const RPC_URL = process.env.ETH_RPC_URL || process.env.RPC_URL || 'https://eth.llamarpc.com';
 
 // Middleware
 app.use(cors());
