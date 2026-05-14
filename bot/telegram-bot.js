@@ -4,6 +4,8 @@ const Web3Manager = require('./web3Manager');
 const UserManager = require('./userManager');
 const LimitOrderManager = require('./limitOrderManager');
 const LimitOrderMonitor = require('./limitOrderMonitor');
+const SniperManager = require('./sniperManager');
+const SniperMonitor = require('./sniperMonitor');
 const config = require('./config');
 
 class TelegramBotManager {
@@ -12,8 +14,10 @@ class TelegramBotManager {
     this.web3Manager = new Web3Manager();
     this.userManager = new UserManager();
     this.limitOrderManager = new LimitOrderManager();
+    this.sniperManager = new SniperManager();
     // Передаем тот же экземпляр LimitOrderManager в мониторинг, чтобы использовать одну память
     this.limitOrderMonitor = new LimitOrderMonitor(this, this.limitOrderManager);
+    this.sniperMonitor = new SniperMonitor(this, this.sniperManager);
     // Временное хранилище для цены лимитного ордера, чтобы не класть длинные числа в callback_data
     // Формат: { [chatId]: { tokenAddress, sellPrice } }
     this.pendingLimitOrders = {};
@@ -26,6 +30,7 @@ class TelegramBotManager {
     this.setupCallbackHandlers();
     // Запускаем мониторинг лимитных ордеров
     this.limitOrderMonitor.start();
+    this.sniperMonitor.start();
   }
 
   // Получить Web3Manager для конкретного пользователя с правильной сетью
@@ -289,6 +294,9 @@ class TelegramBotManager {
       { command: 'positions', description: '📊 Мои позиции' },
       { command: 'zapin', description: '💰 Купить токены' },
       { command: 'exit', description: '🔄 Продать позиции' },
+      { command: 'sniper', description: '🎯 Снайпер по deployer' },
+      { command: 'snipers', description: '📋 Активные снайперы' },
+      { command: 'sniperstop', description: '⏹️ Остановить снайпер' },
       { command: 'balance', description: '💰 Балансы' },
       { command: 'network', description: '🌐 Переключить сеть' },
       { command: 'help', description: '❓ Помощь' },
@@ -386,6 +394,10 @@ class TelegramBotManager {
             { text: 'Token List', callback_data: 'home_tokens' }
           ],
           [
+            { text: 'Sniper', callback_data: 'home_sniper' },
+            { text: 'Snipers', callback_data: 'home_snipers' }
+          ],
+          [
             { text: 'Network', callback_data: 'home_network' },
             { text: 'Help', callback_data: 'home_help' }
           ]
@@ -408,6 +420,9 @@ class TelegramBotManager {
         '/balance - wallet and contract balances\n' +
         '/tokens - token list\n' +
         '/exit - sell all LP for a token\n' +
+        '/sniper - watch deployer and buy first token with liquidity\n' +
+        '/snipers - active sniper tasks\n' +
+        '/sniperstop - stop sniper task\n' +
         '/network - switch network\n\n' +
         'You can also send a token address directly to open buy/sell actions.'
       );
@@ -423,6 +438,18 @@ class TelegramBotManager {
 
     this.bot.onText(/^\/tokens(?:@\w+)?$/, async (msg) => {
       await this.handleTokens(msg.chat.id);
+    });
+
+    this.bot.onText(/^\/sniper(?:@\w+)?$/, (msg) => {
+      this.handleCreateSniper(msg.chat.id);
+    });
+
+    this.bot.onText(/^\/snipers(?:@\w+)?$/, (msg) => {
+      this.handleSnipers(msg.chat.id);
+    });
+
+    this.bot.onText(/^\/sniperstop(?:@\w+)?(?:\s+(\d+))?$/, (msg, match) => {
+      this.handleStopSniper(msg.chat.id, match?.[1]);
     });
 
     this.bot.onText(/^\/exit(?:@\w+)?$/, (msg) => {
@@ -924,6 +951,112 @@ class TelegramBotManager {
     }
   }
 
+  handleCreateSniper(chatId) {
+    const user = this.userManager.getUser(chatId);
+    const userNetwork = user ? this.userManager.getUserNetwork(chatId) : config.DEFAULT_NETWORK;
+    const userContract = user ? this.userManager.getUserContract(chatId, userNetwork) : null;
+    const networkConfig = config.getNetworkConfig(userNetwork);
+
+    if (!user || !userContract) {
+      this.bot.sendMessage(chatId, 'Deploy the contract first with /deploy');
+      return;
+    }
+
+    this.bot.sendMessage(
+      chatId,
+      `Send deployer address and buy amount in this format:\n\n` +
+      `\`deployer_address,amount_${networkConfig.nativeCurrency}\`\n\n` +
+      `Example: \`0x1234...,0.02\`\n\n` +
+      `Network: ${userNetwork}`,
+      { parse_mode: 'Markdown' }
+    );
+
+    this.setPendingInput(chatId, 'sniper');
+    this.bot.once('message', async (msg) => {
+      if (msg.chat.id !== chatId) return;
+
+      try {
+        const [deployerRaw, amountRaw] = (msg.text || '').split(',').map(item => item.trim());
+        const amount = parseFloat(amountRaw);
+
+        if (!ethers.isAddress(deployerRaw)) {
+          throw new Error('Invalid deployer address');
+        }
+        if (!amount || amount <= 0) {
+          throw new Error('Invalid buy amount');
+        }
+
+        const web3Manager = this.getWeb3ManagerForUser(chatId);
+        const startBlock = await web3Manager.provider.getBlockNumber();
+        const sniper = this.sniperManager.createSniper(chatId, {
+          deployer: ethers.getAddress(deployerRaw),
+          amount,
+          network: userNetwork,
+          startBlock
+        });
+
+        await this.bot.sendMessage(
+          chatId,
+          `✅ Sniper enabled\n\n` +
+          `ID: #${sniper.id}\n` +
+          `Deployer: \`${ethers.getAddress(deployerRaw)}\`\n` +
+          `Amount: ${amount} ${networkConfig.nativeCurrency}\n` +
+          `Network: ${userNetwork}\n` +
+          `Start block: ${startBlock}\n\n` +
+          `The bot will buy after it sees a new token and confirmed pair liquidity.`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch (error) {
+        await this.bot.sendMessage(chatId, `Sniper setup error: ${error.message}`);
+      } finally {
+        this.clearPendingInput(chatId, 'sniper');
+      }
+    });
+  }
+
+  handleSnipers(chatId) {
+    const snipers = this.sniperManager.getSnipers(chatId);
+    if (snipers.length === 0) {
+      this.bot.sendMessage(chatId, 'No sniper tasks.');
+      return;
+    }
+
+    const lines = ['🎯 Snipers:\n'];
+    for (const sniper of snipers.slice(-20)) {
+      const shortDeployer = `${sniper.deployer.slice(0, 6)}...${sniper.deployer.slice(-4)}`;
+      const tokenText = sniper.detectedToken ? `\nToken: \`${sniper.detectedToken}\`` : '';
+      lines.push(
+        `#${sniper.id} | ${sniper.status}\n` +
+        `Network: ${sniper.network}\n` +
+        `Deployer: \`${shortDeployer}\`\n` +
+        `Amount: ${sniper.amount}${tokenText}\n`
+      );
+    }
+
+    this.bot.sendMessage(chatId, this.truncateMessage(lines.join('\n')), { parse_mode: 'Markdown' });
+  }
+
+  handleStopSniper(chatId, id = null) {
+    if (id) {
+      const sniper = this.sniperManager.stopSniper(chatId, id);
+      this.bot.sendMessage(chatId, sniper ? `Sniper #${id} stopped.` : `Sniper #${id} not found.`);
+      return;
+    }
+
+    this.bot.sendMessage(chatId, 'Send sniper ID to stop:');
+    this.setPendingInput(chatId, 'sniperstop');
+    this.bot.once('message', (msg) => {
+      if (msg.chat.id !== chatId) return;
+      try {
+        const sniperId = (msg.text || '').trim();
+        const sniper = this.sniperManager.stopSniper(chatId, sniperId);
+        this.bot.sendMessage(chatId, sniper ? `Sniper #${sniperId} stopped.` : `Sniper #${sniperId} not found.`);
+      } finally {
+        this.clearPendingInput(chatId, 'sniperstop');
+      }
+    });
+  }
+
   setupCallbackHandlers() {
     this.bot.on('callback_query', async (query) => {
       const data = query.data || '';
@@ -957,6 +1090,10 @@ class TelegramBotManager {
           await this.handleBalance(chatId);
         } else if (data === 'home_tokens') {
           await this.handleTokens(chatId);
+        } else if (data === 'home_sniper') {
+          this.handleCreateSniper(chatId);
+        } else if (data === 'home_snipers') {
+          this.handleSnipers(chatId);
         } else if (data === 'home_network') {
           this.showNetworkSelection(chatId);
         } else if (data === 'home_help') {

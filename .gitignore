@@ -87,6 +87,8 @@ typechain-types/
 
 # User data
 bot/users.json
+bot/snipers.json
+bot/limit-orders.json
 
 # IDE files
 .vscode/
