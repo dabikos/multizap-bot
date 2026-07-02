@@ -9,6 +9,16 @@ function requireEnv(name) {
 }
 
 // Конфигурации сетей
+function getAlchemyRpc(networkSubdomain) {
+  if (process.env.ALCHEMY_API_KEY) {
+    return `https://${networkSubdomain}.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
+  }
+
+  const ethRpcUrl = process.env.ETH_RPC_URL || process.env.RPC_URL || '';
+  const match = ethRpcUrl.match(/^https:\/\/eth-mainnet\.g\.alchemy\.com\/v2\/([^/?#]+)/i);
+  return match ? `https://${networkSubdomain}.g.alchemy.com/v2/${match[1]}` : null;
+}
+
 const NETWORKS = {
   ETH: {
     name: 'Ethereum',
@@ -47,6 +57,19 @@ const NETWORKS = {
     nativeCurrency: 'ETH',
     gasPrice: process.env.BASE_GAS_PRICE || null, // null = auto
     gasLimit: process.env.BASE_GAS_LIMIT || '2000000',
+    supportsEIP1559: true
+  },
+  ROBINHOOD: {
+    name: 'Robinhood Chain',
+    chainId: 4663,
+    rpcUrl: process.env.ROBINHOOD_RPC_URL || getAlchemyRpc('robinhood-mainnet') || 'https://robinhood-mainnet.g.alchemy.com/v2/your_api_key_here',
+    routerAddress: process.env.ROBINHOOD_ROUTER_ADDRESS || '0x89e5DB8B5aA49aA85AC63f691524311AEB649eba',
+    factoryAddress: process.env.ROBINHOOD_FACTORY_ADDRESS || '0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f',
+    usdtAddress: process.env.ROBINHOOD_USDT_ADDRESS || '0x0000000000000000000000000000000000000000',
+    explorerUrl: 'https://robinhoodchain.blockscout.com',
+    nativeCurrency: 'ETH',
+    gasPrice: process.env.ROBINHOOD_GAS_PRICE || null,
+    gasLimit: process.env.ROBINHOOD_GAS_LIMIT || '2000000',
     supportsEIP1559: true
   },
   MONAD: {

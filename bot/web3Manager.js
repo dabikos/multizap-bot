@@ -824,6 +824,7 @@ class Web3Manager {
         'ETH': 'ethereum',
         'BSC': 'bsc',
         'BASE': 'base',
+        'ROBINHOOD': 'robinhood',
         'MONAD': 'monad',
         'MEGAETH': 'megaeth'
       };
@@ -886,6 +887,7 @@ class Web3Manager {
         case 'BSC':
           return 600; // Примерная цена BNB
         case 'BASE':
+        case 'ROBINHOOD':
         case 'ETH':
         case 'MEGAETH':
           return 3000; // Примерная цена ETH
@@ -902,6 +904,7 @@ class Web3Manager {
         'ETH': 'ethereum',
         'BSC': 'bsc',
         'BASE': 'base',
+        'ROBINHOOD': 'robinhood',
         'MONAD': 'monad',
         'MEGAETH': 'megaeth'
       };
@@ -979,6 +982,7 @@ class Web3Manager {
           switch (this.currentNetwork) {
             case 'BSC': return 600;
             case 'BASE':
+            case 'ROBINHOOD':
             case 'ETH':
             case 'MEGAETH': return 3000;
             default: return 3000;
@@ -1062,6 +1066,7 @@ class Web3Manager {
           case 'BSC':
             return 600;
           case 'BASE':
+          case 'ROBINHOOD':
           case 'ETH':
           case 'MEGAETH':
             return 3000;

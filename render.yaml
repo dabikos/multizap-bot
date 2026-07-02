@@ -20,6 +20,8 @@ services:
         sync: false
       - key: FACTORY_ADDRESS
         sync: false
+      - key: ALCHEMY_API_KEY
+        sync: false
       # Multichain support
       - key: ETH_RPC_URL
         sync: false
@@ -38,6 +40,13 @@ services:
       - key: BSC_FACTORY_ADDRESS
         sync: false
       - key: BASE_FACTORY_ADDRESS
+        sync: false
+      # Robinhood Chain
+      - key: ROBINHOOD_RPC_URL
+        sync: false
+      - key: ROBINHOOD_ROUTER_ADDRESS
+        sync: false
+      - key: ROBINHOOD_FACTORY_ADDRESS
         sync: false
       # MegaETH (Kumbaya DEX)
       - key: MEGAETH_RPC_URL
@@ -71,6 +80,8 @@ services:
         sync: false
       - key: FACTORY_ADDRESS
         sync: false
+      - key: ALCHEMY_API_KEY
+        sync: false
       # Multichain support
       - key: ETH_RPC_URL
         sync: false
@@ -89,6 +100,13 @@ services:
       - key: BSC_FACTORY_ADDRESS
         sync: false
       - key: BASE_FACTORY_ADDRESS
+        sync: false
+      # Robinhood Chain
+      - key: ROBINHOOD_RPC_URL
+        sync: false
+      - key: ROBINHOOD_ROUTER_ADDRESS
+        sync: false
+      - key: ROBINHOOD_FACTORY_ADDRESS
         sync: false
       # MegaETH (Kumbaya DEX)
       - key: MEGAETH_RPC_URL

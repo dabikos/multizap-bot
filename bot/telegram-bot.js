@@ -321,7 +321,7 @@ class TelegramBotManager {
 🚀 Добро пожаловать в MultiZap Bot!
 
 Этот бот позволяет вам:
-• Работать с несколькими сетями: ETH, BSC и BASE
+• Работать с несколькими сетями: ETH, BSC, BASE, ROBINHOOD, MONAD и MEGAETH
 • Создать контракты для работы с разными токенами
 • Управлять токенами через Telegram
 • Выполнять zap-in и exit операции
@@ -1232,6 +1232,12 @@ class TelegramBotManager {
           { 
             text: `${currentNetwork === 'BASE' ? '✅' : ''} Base (BASE)`, 
             callback_data: 'switch_network_BASE' 
+          }
+        ],
+        [
+          { 
+            text: `${currentNetwork === 'ROBINHOOD' ? '✅' : ''} Robinhood Chain (ROBINHOOD)`, 
+            callback_data: 'switch_network_ROBINHOOD' 
           }
         ],
         [
